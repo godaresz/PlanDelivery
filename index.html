@@ -37,6 +37,28 @@
     <!-- filters (shared by the report pages) -->
     <section class="panel filters" id="filterBar">
       <div class="f-group">
+        <div class="mode">
+          <span class="mode-lbl">เลือกข้อมูลตาม</span>
+          <div class="tabs" id="modeTabs">
+            <button class="tab active" data-mode="due">ช่วงเวลา Due</button>
+            <button class="tab" data-mode="sn">วันที่ส่ง (Shipping No.)</button>
+          </div>
+        </div>
+      </div>
+      <div class="f-group" id="fgSn" hidden>
+        <label>วันที่ส่ง<input type="date" id="fSnDate"></label>
+        <div class="quick" id="snShift">
+          <button class="chip" data-sh="ALL">ทั้งวัน (D + N)</button>
+          <button class="chip" data-sh="D">กะเช้า (D)</button>
+          <button class="chip" data-sh="N">กะดึก (N)</button>
+        </div>
+        <div class="quick">
+          <button class="chip" data-snq="today">วันนี้</button>
+          <button class="chip" data-snq="yesterday">เมื่อวาน</button>
+        </div>
+        <span class="hint">แสดงเฉพาะรายการที่มี Shipping No. ของวัน/กะนี้ (ไม่ดู Due)</span>
+      </div>
+      <div class="f-group" id="fgDue">
         <label>เวลาเริ่ม<input type="datetime-local" id="fStart"></label>
         <label>เวลาจบ<input type="datetime-local" id="fEnd"></label>
         <div class="quick">

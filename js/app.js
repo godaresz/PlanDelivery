@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, ST } from './logic.js';
+import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -24,6 +24,7 @@ function shiftLabel(min) {
 
 const S = {
   data: null, rules: DEFAULT_RULES, slideMap: new Map(), ilmsMap: new Map(), user: null,
+  mode: 'due', snDate: '', snShift: 'ALL', // mode 'sn' = pick by ship date / shift from the Shipping No.
   wh: 'ALL', status: 'ALL', truckSt: 'ALL', win: null, search: '', limit: 300, lastRows: [], page: 'overview',
 };
 
@@ -65,7 +66,8 @@ function setRange(kind) {
   saveFilters(); render();
 }
 function saveFilters() {
-  lsSet('sc_filters', JSON.stringify({ s: $('#fStart').value, e: $('#fEnd').value, b: $('#fBacklog').checked, wh: S.wh }));
+  lsSet('sc_filters', JSON.stringify({ s: $('#fStart').value, e: $('#fEnd').value, b: $('#fBacklog').checked, wh: S.wh,
+    mode: S.mode, snDate: S.snDate, snShift: S.snShift }));
 }
 function loadFilters() {
   try {
@@ -73,10 +75,32 @@ function loadFilters() {
     if (f && f.s && f.e) {
       $('#fStart').value = f.s; $('#fEnd').value = f.e; $('#fBacklog').checked = !!f.b;
       if (f.wh) S.wh = f.wh;
+      if (f.mode) S.mode = f.mode;
+      if (f.snDate) S.snDate = f.snDate;
+      if (f.snShift) S.snShift = f.snShift;
       return true;
     }
   } catch { /* ignore */ }
   return false;
+}
+
+// ---------- ship-date mode ----------
+const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+function snMatch(info) {
+  if (!info || !S.snDate) return false;
+  return ymd(info.date) === S.snDate && (S.snShift === 'ALL' || info.shift === S.snShift);
+}
+function drawMode() {
+  $$('#modeTabs .tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === S.mode));
+  $('#fgSn').hidden = S.mode !== 'sn';
+  $('#fgDue').hidden = S.mode === 'sn';
+  $('#fSnDate').value = S.snDate;
+  $$('#snShift .chip').forEach((c) => c.classList.toggle('on', c.dataset.sh === S.snShift));
+}
+function setMode(mode) {
+  S.mode = mode;
+  if (mode === 'sn' && !S.snDate) S.snDate = ymd(new Date());
+  drawMode(); saveFilters(); render();
 }
 
 // ---------- data ----------
@@ -133,7 +157,10 @@ function currentRows() {
     const rows = (S.data && S.data[wh].data) || [];
     let ev = evaluate(rows, S.slideMap, S.rules.groups || [], now).map((r) => ({ ...r, wh }));
     full[wh] = ev;
-    ev = ev.filter((r) => {
+    const snCache = new Map(); // parse each Shipping No. once
+    const info = (sn) => { if (!snCache.has(sn)) snCache.set(sn, parseTrip(sn)); return snCache.get(sn); };
+    if (S.mode === 'sn') ev = ev.filter((r) => r.sn && snMatch(info(r.sn)));
+    else ev = ev.filter((r) => {
       if (!r.due) return true;
       if (start && end && r.due >= start && r.due < end) return true;
       if (!start || !end) return true;
@@ -157,6 +184,7 @@ function tripsInView(whs, viewRows) {
   const q = S.search.trim();
   return byTrip(whs.flatMap((wh) => full[wh]), S.ilmsMap, new Date()).filter((x) => {
     if (q) return inView.has(x.sn);
+    if (S.mode === 'sn') return snMatch(x.info);
     if (!x.info || !start || !end) return inView.has(x.sn);
     if (x.info.start < end && x.info.end > start) return true;
     return backlog && !x.left && x.info.start < start;
@@ -576,6 +604,13 @@ function readRules() {
 function bind() {
   $$('input[type=file]').forEach((i) => i.addEventListener('change', onUpload));
   $$('.quick .chip').forEach((c) => c.addEventListener('click', () => setRange(c.dataset.q)));
+  $$('#modeTabs .tab').forEach((t) => t.addEventListener('click', () => setMode(t.dataset.mode)));
+  $('#fSnDate').addEventListener('change', (e) => { S.snDate = e.target.value; saveFilters(); render(); });
+  $$('#snShift .chip').forEach((c) => c.addEventListener('click', () => { S.snShift = c.dataset.sh; drawMode(); saveFilters(); render(); }));
+  $$('[data-snq]').forEach((c) => c.addEventListener('click', () => {
+    const d = new Date(); if (c.dataset.snq === 'yesterday') d.setDate(d.getDate() - 1);
+    S.snDate = ymd(d); drawMode(); saveFilters(); render();
+  }));
   ['#fStart', '#fEnd', '#fBacklog'].forEach((s) => $(s).addEventListener('change', () => {
     $$('.quick .chip').forEach((c) => c.classList.remove('on')); saveFilters(); render();
   }));
@@ -658,6 +693,7 @@ function tick() {
 async function main() {
   bind();
   if (!loadFilters()) setRange('auto');
+  drawMode();
   $$('#whTabs .tab').forEach((x) => x.classList.toggle('active', x.dataset.wh === S.wh));
   $('#modeBadge').textContent = store.isDemo ? 'โหมดทดลอง (เก็บในเครื่องนี้)' : 'Firebase';
   $('#modeBadge').classList.toggle('demo', store.isDemo);

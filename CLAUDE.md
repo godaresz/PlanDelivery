@@ -43,6 +43,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    from earlier uploads (shown as shipped) and never downgrades a completed row; completed rows older than
    `keepDays` (default 7, set in rules dialog) are dropped.
 7. View filter: start/end datetime, end minute inclusive (shift buttons day 07:30–19:59 / night 20:00–07:29) + optional backlog of open rows due before start.
+   Second mode "วันที่ส่ง (Shipping No.)": pick a ship date + shift (ALL / D / N); shows only rows and trucks whose
+   Shipping No. date/shift match (due is ignored; rows without a Shipping No. are hidden).
 8. WH1 Window Names start with `1`, WH4 with `4` (used to split the WMS upload).
 9. **Trucks (รถ)** = distinct `Shipping No.` (WMS column AC), format `YYYYMMDD` + WH digit + shift `D`/`N` + trip no.,
    e.g. `202610144D003`. D = 07:30–19:59 of that date, N = 20:00–07:29 next day. Truck shown if its shift overlaps the
