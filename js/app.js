@@ -190,7 +190,9 @@ function tripsInView(whs, viewRows) {
   const { start, end, backlog, full } = S.view;
   const inView = new Set(viewRows.map((r) => r.sn).filter(Boolean));
   const q = S.search.trim();
-  return byTrip(whs.flatMap((wh) => full[wh]), S.ilmsMap, new Date()).filter((x) => {
+  // build trucks from both warehouses so a truck's contents are complete, then keep the trucks owned by `whs`
+  return byTrip(WHS.flatMap((wh) => full[wh]), S.ilmsMap, new Date()).filter((x) => {
+    if (x.info ? !whs.includes(x.whOwn) : ![...x.wh].some((w) => whs.includes(w))) return false;
     if (q) return inView.has(x.sn);
     if (S.mode === 'sn') return snMatch(x.info);
     if (!x.info || !start || !end) return inView.has(x.sn);
@@ -341,8 +343,8 @@ function renderTrips(list, rows) {
   // by date / shift / WH from the Shipping No.
   const grp = new Map();
   for (const x of list) {
-    const key = x.info ? `${x.info.date.getTime()}|${x.info.shift}|${[...x.wh].join(',')}` : `~|?|${[...x.wh].join(',')}`;
-    if (!grp.has(key)) grp.set(key, { info: x.info, wh: [...x.wh].join(', '), list: [] });
+    const key = x.info ? `${x.info.date.getTime()}|${x.info.shift}|${x.whOwn}` : `~|?|${x.whOwn}`;
+    if (!grp.has(key)) grp.set(key, { info: x.info, wh: x.whOwn, list: [] });
     grp.get(key).list.push(x);
   }
   const gs = [...grp.values()];
@@ -379,7 +381,7 @@ function renderTrips(list, rows) {
       <th>Truck License</th><th>Window Name</th><th class="n">Pallet / Rack</th><th class="n">กล่อง</th>
       <th>Due เริ่ม – จบ</th><th>ออกจริง</th><th class="n">เทียบ Due เริ่ม</th><th>สถานะ</th></tr></thead>
     <tbody>${shown.map((x) => `<tr class="clickable" data-sn="${esc(x.sn)}">
-      ${showWh ? `<td>${[...x.wh].sort().join(', ')}</td>` : ''}
+      ${showWh ? `<td>${x.whOwn}${[...x.wh].some((w) => w !== x.whOwn) ? `<div class="src-tag">มีของ ${[...x.wh].filter((w) => w !== x.whOwn).join(', ')}</div>` : ''}</td>` : ''}
       <td class="t"><b>${esc(x.sn)}</b></td>
       <td>${x.info ? `${SHIFT_TH[x.info.shift]} <span class="src-tag">${fmtShow(x.info.date).slice(0, 5)}</span>` : '-'}</td>
       <td class="n">${x.info ? x.info.no : '-'}</td>

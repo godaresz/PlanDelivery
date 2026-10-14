@@ -165,6 +165,8 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
       x.lateMin = x.late ? x.maxLate : null;
     }
     x.od = !x.left && !!x.dueStart && x.dueStart < now;
+    // owning warehouse = 9th digit of the Shipping No. (a truck may also carry the other WH's pallets)
+    x.whOwn = x.info ? `WH${x.info.whDigit}` : [...x.wh].sort().join(', ');
   }
   const t = (x) => (x.info ? x.info.start.getTime() : Infinity);
   return [...g.values()].sort((a, b) => t(a) - t(b) || a.sn.localeCompare(b.sn));

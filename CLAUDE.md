@@ -49,6 +49,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 9. **Trucks (รถ)** = distinct `Shipping No.` (WMS column AC), format `YYYYMMDD` + WH digit + shift `D`/`N` + trip no.,
    e.g. `202610144D003`. D = 07:30–19:59 of that date, N = 20:00–07:29 next day. Truck shown if its shift overlaps the
    view range (+ earlier not-left trucks when backlog is on). Due start / end = earliest / latest due used on the truck.
+   A truck belongs to the WH in its 9th digit (it may also carry the other WH's pallets; counted once, under its owner).
    Window table's truck column counts only these trucks (rows on other-shift trucks still count as pallets); the truck
    page notes other-shift trucks carrying rows due in range and in-shift trucks carrying only rows due outside it.
 10. **ILMS** (Truck Inquiry export): `Truckplan No` = WMS Shipping No.; `Delivery Date` = actual departure. Only WH1/WH4
