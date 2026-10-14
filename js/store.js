@@ -22,7 +22,7 @@ export async function init() {
   db = fs.getFirestore(app);
   auth = fa.getAuth(app);
   // live updates: only the small meta documents are watched
-  for (const id of ['slide_meta', 'WH1_meta', 'WH4_meta', 'rules']) {
+  for (const id of ['slide_meta', 'WH1_meta', 'WH4_meta', 'ilms_meta', 'rules']) {
     fs.onSnapshot(fs.doc(db, COLLECTION, id), () => emit(), () => {});
   }
 }
@@ -98,11 +98,12 @@ async function loadChunked(prefix) {
 
 // ---------- public API ----------
 export async function loadAll() {
-  const [slide, wh1, wh4, rules] = await Promise.all([
-    loadChunked('slide'), loadChunked('WH1'), loadChunked('WH4'), getDoc('rules'),
+  const [slide, wh1, wh4, ilms, rules] = await Promise.all([
+    loadChunked('slide'), loadChunked('WH1'), loadChunked('WH4'), loadChunked('ilms'), getDoc('rules'),
   ]);
-  return { slide, WH1: wh1, WH4: wh4, rules };
+  return { slide, WH1: wh1, WH4: wh4, ilms, rules };
 }
 export const saveSlide = (payload, meta) => saveChunked('slide', payload, meta);
 export const saveWms = (wh, rows, meta) => saveChunked(wh, rows, meta);
+export const saveIlms = (rows, meta) => saveChunked('ilms', rows, meta);
 export const saveRules = (rules) => writeDocs([['rules', { ...rules, updatedAt: new Date().toISOString() }]], []);

@@ -16,9 +16,10 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 - `js/parse.js` — file parsing, date/time helpers. Dates are stored as local `"YYYY-MM-DD HH:mm"` strings.
 - `js/logic.js` — effective due, status, window summary, WMS merge.
 - `js/store.js` — Firestore / localStorage. All data lives in collection `shipcheck`:
-  `slide_meta` + `slide_c0..n`, `WH1_meta` + `WH1_c*`, `WH4_meta` + `WH4_c*`, `rules`.
+  `slide_meta` + `slide_c0..n`, `WH1_meta` + `WH1_c*`, `WH4_meta` + `WH4_c*`, `ilms_meta` + `ilms_c*`, `rules`.
   Payloads are JSON split into ≤700k-char chunk docs so a page load is ~10 reads. Viewers watch only the meta docs.
 - `js/app.js` — UI (Thai labels), uploads, filters, rules dialog, Excel export.
+  Pages via URL hash: `#overview`, `#window`, `#trucks`, `#detail`, `#data` (uploads + rules). Filter bar is shared.
 
 ## Business rules (agreed with the user — do not change without asking)
 1. **Due used**
@@ -45,8 +46,11 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 8. WH1 Window Names start with `1`, WH4 with `4` (used to split the WMS upload).
 9. **Trucks (รถ)** = distinct `Shipping No.` (WMS column AC), format `YYYYMMDD` + WH digit + shift `D`/`N` + trip no.,
    e.g. `202610144D003`. D = 07:30–19:59 of that date, N = 20:00–07:29 next day. Truck shown if its shift overlaps the
-   view range (+ earlier not-left trucks when backlog is on). Left (ส่งแล้ว) = any row on it shipped; late (ช้า) = left
-   and a row shipped after its due; remaining (เหลือ) = not left. Summary: used / left / remaining / late.
+   view range (+ earlier not-left trucks when backlog is on). Due start / end = earliest / latest due used on the truck.
+10. **ILMS** (Truck Inquiry export): `Truckplan No` = WMS Shipping No.; `Delivery Date` = actual departure. Only WH1/WH4
+   numbers kept; uploads merge by Truckplan No (newer wins), dropped after `keepDays`.
+   Departure = ILMS Delivery Date if matched, else WMS (left once any row shipped). Late (ออกช้า) = departure after
+   Due start (ILMS) / a row shipped after its due (WMS fallback). Remaining = not left; overdue = Due start passed.
 
 ## UI colours (user's standard palette)
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED

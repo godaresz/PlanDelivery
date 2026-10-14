@@ -25,28 +25,17 @@
     </div>
   </header>
 
-  <main>
-    <!-- data sources -->
-    <section class="panel sources">
-      <div class="src" id="srcSlide">
-        <div class="src-h"><span class="dot"></span>DataSlide</div>
-        <div class="src-meta">ยังไม่มีข้อมูล</div>
-        <label class="btn admin-only">อัปเดต DataSlide<input type="file" accept=".xlsx,.xls,.csv" data-kind="slide" hidden></label>
-      </div>
-      <div class="src" id="srcWMS">
-        <div class="src-h"><span class="dot"></span>WMS (WH1 + WH4)</div>
-        <div class="src-meta">ยังไม่มีข้อมูล</div>
-        <label class="btn admin-only">อัปเดตไฟล์ WMS<input type="file" accept=".xlsx,.xls,.csv" data-kind="wms" hidden></label>
-      </div>
-      <div class="src rules-src">
-        <div class="src-h">กฎ Slide Due ตาม Dock</div>
-        <div class="src-meta" id="rulesMeta">-</div>
-        <button id="btnRules" class="btn ghost">ดู / แก้ไขกฎ</button>
-      </div>
-    </section>
+  <nav class="nav" id="nav">
+    <a href="#overview" data-page="overview"><span class="ic">▦</span>ภาพรวม</a>
+    <a href="#window" data-page="window"><span class="ic">☰</span>สรุป Window<b class="cnt" id="cntWin"></b></a>
+    <a href="#trucks" data-page="trucks"><span class="ic">⛟</span>สรุปรถ<b class="cnt" id="cntTruck"></b></a>
+    <a href="#detail" data-page="detail"><span class="ic">≡</span>รายละเอียด<b class="cnt" id="cntDetail"></b></a>
+    <a href="#data" data-page="data"><span class="ic">⇪</span>ข้อมูล &amp; กฎ</a>
+  </nav>
 
-    <!-- filters -->
-    <section class="panel filters">
+  <main>
+    <!-- filters (shared by the report pages) -->
+    <section class="panel filters" id="filterBar">
       <div class="f-group">
         <label>เวลาเริ่ม<input type="datetime-local" id="fStart"></label>
         <label>เวลาจบ<input type="datetime-local" id="fEnd"></label>
@@ -55,47 +44,108 @@
           <button class="chip" data-q="night">กะดึก 20:00–07:29</button>
           <button class="chip" data-q="today">วันนี้ทั้งวัน</button>
         </div>
+        <label class="check"><input type="checkbox" id="fBacklog" checked> รวมรายการค้างก่อนเวลาเริ่ม</label>
       </div>
       <div class="f-group">
-        <label class="check"><input type="checkbox" id="fBacklog" checked> รวมรายการค้างก่อนเวลาเริ่ม</label>
         <div class="tabs" id="whTabs">
           <button class="tab active" data-wh="ALL">ทั้งหมด</button>
           <button class="tab" data-wh="WH1">WH1</button>
           <button class="tab" data-wh="WH4">WH4</button>
         </div>
-        <input type="search" id="fSearch" placeholder="ค้นหา Order / Supplier / Window / Pallet">
+        <input type="search" id="fSearch" placeholder="ค้นหา Order / Supplier / Window / Pallet / Shipping No.">
       </div>
     </section>
 
-    <section id="kpis" class="kpis"></section>
-
-    <section class="panel">
-      <div class="panel-h">
-        <h2>สรุปตาม Window Name</h2>
-        <span class="hint">คลิกแถวเพื่อดูรายละเอียดของ Window นั้น</span>
+    <!-- page: overview -->
+    <div class="page" data-page="overview">
+      <section id="kpis" class="kpis"></section>
+      <section class="panel">
+        <div class="panel-h"><h2>รถ (Shipping No.)</h2><a class="link" href="#trucks">ดูทั้งหมด →</a></div>
+        <div id="ovTruckTiles" class="kpi-row trip-tiles"></div>
+      </section>
+      <div class="ov-grid">
+        <section class="panel">
+          <div class="panel-h"><h2>Window ที่เลยกำหนดมากสุด</h2><a class="link" href="#window">ดูทั้งหมด →</a></div>
+          <div id="ovWin"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-h"><h2>รถที่ยังไม่ออก</h2><a class="link" href="#trucks">ดูทั้งหมด →</a></div>
+          <div id="ovTruck"></div>
+        </section>
       </div>
-      <div class="table-wrap"><table id="tblWin" class="tbl"></table></div>
-    </section>
+    </div>
 
-    <section class="panel">
-      <div class="panel-h">
-        <h2>สรุปรถ (Shipping No.) <span id="tripCount" class="muted"></span></h2>
-        <span class="hint">1 Shipping No. = รถ 1 คัน · เลข 202610144D003 = วันที่ 2026-10-14 · WH4 · กะเช้า (D) / กะดึก (N) · Trip 003 · คลิกแถวเพื่อดูรายละเอียด</span>
-      </div>
-      <div id="tripTiles" class="kpi-row trip-tiles"></div>
-      <div class="table-wrap"><table id="tblTripSum" class="tbl"></table></div>
-      <div class="table-wrap short" style="margin-top:10px"><table id="tblTrip" class="tbl"></table></div>
-    </section>
+    <!-- page: window summary -->
+    <div class="page" data-page="window">
+      <section class="panel">
+        <div class="panel-h">
+          <h2>สรุปตาม Window Name</h2>
+          <span class="hint">คลิกแถวเพื่อดูรายละเอียดของ Window นั้น</span>
+        </div>
+        <div class="table-wrap"><table id="tblWin" class="tbl"></table></div>
+      </section>
+    </div>
 
-    <section class="panel">
-      <div class="panel-h">
-        <h2>รายละเอียด <span id="detailTitle" class="muted"></span></h2>
-        <div class="status-chips" id="stChips"></div>
-        <button id="btnExport" class="btn ghost">ส่งออก Excel</button>
-      </div>
-      <div class="table-wrap"><table id="tblDetail" class="tbl"></table></div>
-      <div class="more"><button id="btnMore" class="btn ghost" hidden>แสดงเพิ่ม</button></div>
-    </section>
+    <!-- page: trucks -->
+    <div class="page" data-page="trucks">
+      <section class="panel">
+        <div class="panel-h">
+          <h2>สรุปรถ (Shipping No.) <span id="tripCount" class="muted"></span></h2>
+          <span class="hint">1 Shipping No. = รถ 1 คัน · 202610144D003 = 14/10/2026 · WH4 · กะเช้า (D) / กะดึก (N) · Trip 003 · เวลาออกจริงจาก ILMS (Delivery Date)</span>
+        </div>
+        <div id="tripTiles" class="kpi-row trip-tiles"></div>
+        <div class="table-wrap"><table id="tblTripSum" class="tbl"></table></div>
+      </section>
+      <section class="panel">
+        <div class="panel-h">
+          <h2>รายการรถ</h2>
+          <div class="status-chips" id="truckChips"></div>
+          <span class="hint">คลิกแถวเพื่อดูรายละเอียดของรถคันนั้น</span>
+        </div>
+        <div class="table-wrap"><table id="tblTrip" class="tbl"></table></div>
+      </section>
+    </div>
+
+    <!-- page: detail -->
+    <div class="page" data-page="detail">
+      <section class="panel">
+        <div class="panel-h">
+          <h2>รายละเอียด <span id="detailTitle" class="muted"></span></h2>
+          <div class="status-chips" id="stChips"></div>
+          <button id="btnExport" class="btn ghost">ส่งออก Excel</button>
+        </div>
+        <div class="table-wrap"><table id="tblDetail" class="tbl"></table></div>
+        <div class="more"><button id="btnMore" class="btn ghost" hidden>แสดงเพิ่ม</button></div>
+      </section>
+    </div>
+
+    <!-- page: data sources + rules -->
+    <div class="page" data-page="data">
+      <section class="sources">
+        <div class="src" id="srcSlide">
+          <div class="src-h"><span class="dot"></span>DataSlide<span class="src-sub">Due ใหม่ที่ Slide</span></div>
+          <div class="src-meta">ยังไม่มีข้อมูล</div>
+          <label class="btn primary admin-only">อัปเดต DataSlide<input type="file" accept=".xlsx,.xls,.csv" data-kind="slide" hidden></label>
+          <p class="hint">อัปโหลดใหม่ = ล้างข้อมูลเดิมทั้งหมด</p>
+        </div>
+        <div class="src" id="srcWMS">
+          <div class="src-h"><span class="dot"></span>WMS<span class="src-sub">WH1 + WH4 ไฟล์เดียว</span></div>
+          <div class="src-meta">ยังไม่มีข้อมูล</div>
+          <label class="btn primary admin-only">อัปเดตไฟล์ WMS<input type="file" accept=".xlsx,.xls,.csv" data-kind="wms" hidden></label>
+          <p class="hint">แยก WH จาก Window Name (1… / 4…) · เก็บรายการที่ส่งแล้วจากรอบก่อน</p>
+        </div>
+        <div class="src" id="srcILMS">
+          <div class="src-h"><span class="dot"></span>ILMS<span class="src-sub">Truck Inquiry — เวลารถออกจริง</span></div>
+          <div class="src-meta">ยังไม่มีข้อมูล</div>
+          <label class="btn primary admin-only">อัปเดตไฟล์ ILMS<input type="file" accept=".xlsx,.xls,.csv" data-kind="ilms" hidden></label>
+          <p class="hint">เทียบ Truckplan No กับ Shipping No. ของ WMS · Delivery Date = เวลารถออกจริง · รวมกับข้อมูลเดิม</p>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-h"><h2>กฎ Slide Due ตาม Dock</h2><button id="btnRules" class="btn ghost">ดู / แก้ไขกฎ</button></div>
+        <div class="src-meta" id="rulesMeta">-</div>
+      </section>
+    </div>
   </main>
 
   <!-- login dialog -->

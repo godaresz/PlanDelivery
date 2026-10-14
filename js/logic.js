@@ -115,15 +115,19 @@ export function parseTrip(sn) {
 }
 
 // group by Shipping No. (one truck); rows without a Shipping No. are skipped.
-// left (ส่งแล้ว) = any row on the truck shipped; late = left and a row shipped after its due;
-// overdue = not left yet and a row's due has passed.
-export function byTrip(rows) {
+// ilms: Map Truckplan No -> { dt: Date (actual departure), tr, ms }
+// Departure = ILMS Delivery Date when matched, else WMS (truck counts as left once any row on it is shipped).
+// Due start / end = earliest / latest due used of the rows on the truck.
+// Late = left after Due start (ILMS) — or, without ILMS, a row shipped after its due (WMS).
+// Overdue = not left yet and Due start has passed.
+export function byTrip(rows, ilms = new Map(), now = new Date()) {
   const g = new Map();
   for (const r of rows) {
     if (!r.sn) continue;
     if (!g.has(r.sn)) {
       g.set(r.sn, { sn: r.sn, info: parseTrip(r.sn), wh: new Set(), trucks: new Set(), wins: new Set(), docks: new Set(),
-        p: new Set(), r: new Set(), box: 0, rows: 0, done: 0, lateRows: 0, maxLate: 0, overdue: 0, first: null, last: null });
+        p: new Set(), r: new Set(), box: 0, rows: 0, done: 0, lateRows: 0, maxLate: 0,
+        dueStart: null, dueEnd: null, wmsFirst: null, wmsLast: null });
     }
     const x = g.get(r.sn);
     if (r.wh) x.wh.add(r.wh);
@@ -134,19 +138,45 @@ export function byTrip(rows) {
     x.box += r.bx; x.rows++;
     if (r.done) x.done++;
     if (r.st === ST.DONE_LATE) { x.lateRows++; x.maxLate = Math.max(x.maxLate, r.lateMin || 0); }
-    if (r.st === ST.OVERDUE) x.overdue++;
+    if (r.due) {
+      if (!x.dueStart || r.due < x.dueStart) x.dueStart = r.due;
+      if (!x.dueEnd || r.due > x.dueEnd) x.dueEnd = r.due;
+    }
     if (r.shipT) {
-      if (!x.first || r.shipT < x.first) x.first = r.shipT;
-      if (!x.last || r.shipT > x.last) x.last = r.shipT;
+      if (!x.wmsFirst || r.shipT < x.wmsFirst) x.wmsFirst = r.shipT;
+      if (!x.wmsLast || r.shipT > x.wmsLast) x.wmsLast = r.shipT;
     }
   }
   for (const x of g.values()) {
-    x.left = x.done > 0;
-    x.late = x.left && x.lateRows > 0;
-    x.od = !x.left && x.overdue > 0;
+    const il = ilms.get(x.sn);
+    x.ilms = il || null;
+    if (il && il.dt) {
+      x.src = 'ILMS';
+      x.left = il.dt <= now;
+      x.dep = il.dt;
+      x.lateMin = x.dueStart ? Math.round((il.dt - x.dueStart) / 60000) : null;
+      x.late = x.left && x.lateMin > 0;
+      if (il.tr) x.trucks.add(il.tr);
+    } else {
+      x.src = x.done ? 'WMS' : '';
+      x.left = x.done > 0;
+      x.dep = x.left ? x.wmsLast : null;
+      x.late = x.left && x.lateRows > 0;
+      x.lateMin = x.late ? x.maxLate : null;
+    }
+    x.od = !x.left && !!x.dueStart && x.dueStart < now;
   }
   const t = (x) => (x.info ? x.info.start.getTime() : Infinity);
   return [...g.values()].sort((a, b) => t(a) - t(b) || a.sn.localeCompare(b.sn));
+}
+
+// merge ILMS uploads: newer file wins per Truckplan No; drop trucks older than keepDays
+export function mergeIlms(oldRows, newRows, keepDays, now) {
+  const m = new Map(oldRows.map((r) => [r.tp, r]));
+  for (const r of newRows) m.set(r.tp, r);
+  const cutoff = new Date(now.getTime() - keepDays * 86400000);
+  const out = [...m.values()].filter((r) => { const d = fromKey(r.dt); return !d || d >= cutoff; });
+  return { rows: out, dropped: m.size - out.length };
 }
 
 // totals for a list of trucks

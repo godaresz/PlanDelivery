@@ -202,6 +202,30 @@ export async function parseSlideFile(file) {
   return { orders, dues, validCount: valid };
 }
 
+// ---------- ILMS truck inquiry ----------
+// Truckplan No (= WMS Shipping No.) + Delivery Date (actual truck departure). Only WH1 / WH4 trucks are kept.
+export async function parseIlmsFile(file) {
+  const rows = await readTable(file, ['Truckplan No', 'Delivery Date']);
+  const h = findHeader(rows, ['Truckplan No', 'Delivery Date']);
+  if (h < 0) throw new Error('ไม่พบหัวคอลัมน์ Truckplan No / Delivery Date ในไฟล์ ILMS');
+  const H = rows[h];
+  const c = (n) => colIndex(H, n);
+  const C = { tp: c('Truckplan No'), dt: c('Delivery Date'), tr: c('Truck License'), ms: c('Milestone'), from: c('Location From') };
+  const clean = (v) => str(v).replace(/^="?|"$/g, ''); // Excel-style ="72-2155"
+  const out = [];
+  let other = 0;
+  for (let i = h + 1; i < rows.length; i++) {
+    const r = rows[i];
+    const tp = clean(r[C.tp]).toUpperCase();
+    if (!tp) continue;
+    if (!/^\d{8}[14][DN]\d+$/.test(tp)) { other++; continue; }
+    const dt = toDateTime(r[C.dt]);
+    out.push({ tp, dt: fmtKey(dt), tr: C.tr >= 0 ? clean(r[C.tr]) : '', ms: C.ms >= 0 ? clean(r[C.ms]) : '',
+      from: C.from >= 0 ? clean(r[C.from]) : '' });
+  }
+  return { rows: out, other };
+}
+
 // ---------- WMS export ----------
 // Shipping No. is column AC; find it by name, else take AC if its header mentions "ship"
 function shippingNoCol(H) {
