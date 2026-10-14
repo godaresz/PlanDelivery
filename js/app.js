@@ -650,6 +650,7 @@ async function onUpload(e) {
       const m = mergeIlms((latest.ilms && latest.ilms.data) || [], res.rows);
       await store.saveIlms(m.rows, { fileName: file.name, count: m.rows.length, fromFile: res.rows.length });
       toast(`อัปเดต ILMS แล้ว: ${res.rows.length.toLocaleString()} คันจากไฟล์ (WH1/WH4)` + (res.other ? ` · ข้ามคลังอื่น ${res.other}` : '')
+        + (m.skipped ? ` · ข้ามที่ COMPLETE แล้ว ${m.skipped.toLocaleString()}` : '')
         + ` · รวมเก็บไว้ ${m.rows.length.toLocaleString()} คัน`, false, 8000);
     } else if (kind === 'slide') {
       toast('กำลังอ่านไฟล์ DataSlide…', false, 60000);

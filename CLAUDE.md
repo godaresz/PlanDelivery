@@ -47,7 +47,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    - Other rows are replaced by the new file, but a shipped row is never downgraded to open.
    - Shipped rows missing from the new file are kept; open rows missing from it are dropped (no longer in WMS).
    - Shipped rows whose ship day is older than `keepDays` (default 7) move to the archive (not deleted).
-   ILMS uploads merge by Truckplan No (not deleted by uploads).
+   ILMS uploads merge by Truckplan No (not deleted by uploads); trucks with Milestone `COMPLETE` are LOCKED like
+   confirmed WMS rows, other trucks take the newer file's values.
    **Quarterly export + delete:** Firebase keeps the current + previous calendar quarter. Older quarters are exported
    to Excel automatically when a signed-in user opens the app (sheets WH1, WH4, ILMS), then deleted only after the
    user confirms. A quarter counts as exported only if row counts still match the export (`arch_index.exported[q].sig`);
@@ -63,7 +64,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Window table's truck column counts only these trucks (rows on other-shift trucks still count as pallets); the truck
    page notes other-shift trucks carrying rows due in range and in-shift trucks carrying only rows due outside it.
 10. **ILMS** (Truck Inquiry export): `Truckplan No` = WMS Shipping No.; `Delivery Date` = actual departure. Only WH1/WH4
-   numbers kept; uploads merge by Truckplan No (newer wins), never deleted.
+   numbers kept; uploads merge by Truckplan No (newer wins unless the stored truck is `COMPLETE` = locked), never deleted.
    Departure = ILMS Delivery Date if matched, else WMS (left once any row shipped). Late (ออกช้า) = departure after
    Due start (ILMS) / a row shipped after its due (WMS fallback). Remaining = not left; overdue = Due start passed.
 

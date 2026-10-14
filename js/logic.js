@@ -173,11 +173,18 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
 }
 
 // merge ILMS uploads: newer file wins per Truckplan No; drop trucks older than keepDays
-// merge ILMS uploads: newer file wins per Truckplan No; nothing is deleted
+// merge ILMS uploads: nothing is deleted. A truck whose Milestone is COMPLETE is LOCKED (a new file never changes it);
+// other trucks take the newer file's values (their milestone is still moving).
+export const ilmsLocked = (r) => String(r.ms || '').toUpperCase() === 'COMPLETE';
 export function mergeIlms(oldRows, newRows) {
   const m = new Map(oldRows.map((r) => [r.tp, r]));
-  for (const r of newRows) m.set(r.tp, r);
-  return { rows: [...m.values()] };
+  let skipped = 0;
+  for (const r of newRows) {
+    const o = m.get(r.tp);
+    if (o && ilmsLocked(o)) { skipped++; continue; }
+    m.set(r.tp, r);
+  }
+  return { rows: [...m.values()], skipped };
 }
 // totals for a list of trucks
 export function tripTotals(list) {
