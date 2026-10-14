@@ -9,19 +9,26 @@ export const truckOk = (t) => !!t && !isAllZero(t);
 // complete = Shipping Confirm CONFIRMED, or Shipping Time + truck license
 export const isComplete = (r) => r.cf === 1 || (!!r.sh && truckOk(r.tr));
 
-// rules: [{ docks: ['S0','S2'], map: [{ orig: '07:30', slide: '08:30' }] }]
+// rules: [{ docks: ['S0','S2'], map: [{ orig: '07:30', slide: '08:30' }] },   // time map: exact WMS time → slide time
+//         { type: 'shift', docks: ['S3'], shift: -30 }]                        // shift: any WMS time ± minutes
+// time-map groups are checked first, then shift groups; the first match wins.
 function ruleDue(row, wmsDue, rules) {
   if (!wmsDue || !rules) return null;
   const dock = (row.d || '').toUpperCase();
+  const hasDock = (g) => g.docks.some((x) => x.toUpperCase() === dock);
   const hhmm = `${String(wmsDue.getHours()).padStart(2, '0')}:${String(wmsDue.getMinutes()).padStart(2, '0')}`;
   for (const g of rules) {
-    if (!g.docks.some((x) => x.toUpperCase() === dock)) continue;
-    const m = g.map.find((x) => x.orig === hhmm);
+    if (g.type === 'shift' || !hasDock(g)) continue;
+    const m = (g.map || []).find((x) => x.orig === hhmm);
     if (!m) continue;
     const [sh, sm] = m.slide.split(':').map(Number);
     const d = new Date(wmsDue.getFullYear(), wmsDue.getMonth(), wmsDue.getDate(), sh, sm);
     if (sh * 60 + sm < wmsDue.getHours() * 60 + wmsDue.getMinutes()) d.setDate(d.getDate() + 1); // crosses midnight
     return d;
+  }
+  for (const g of rules) {
+    if (g.type !== 'shift' || !g.shift || !hasDock(g)) continue;
+    return new Date(wmsDue.getTime() + g.shift * 60000);
   }
   return null;
 }

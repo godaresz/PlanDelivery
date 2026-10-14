@@ -112,9 +112,11 @@
     <div>
       <h3>กฎ Slide Due แยกตาม Dock</h3>
       <p class="hint">ใช้เฉพาะรายการที่ <b>ไม่มีใน DataSlide</b> — ถ้า Dock ตรงกลุ่ม และเวลา Due ใน WMS ตรงกับ Original Due จะเลื่อนเป็นเวลา Slide Due ของวันเดียวกัน (ถ้าเวลาข้ามเที่ยงคืนจะเป็นวันถัดไป)</p>
+      <p class="hint"><b>เลื่อนเร็ว/ช้า</b> — เลือก Dock แล้วเลือกเลื่อน Due ใน WMS เร็วขึ้นหรือช้าลงทีละ 30 นาที (ใช้กับทุกเวลา) · ถ้า Dock ตรงกับกฎ “เปลี่ยนเวลา” ด้วย จะใช้กฎเปลี่ยนเวลาก่อน</p>
       <div id="rulesBody"></div>
       <div class="rules-tools admin-only">
-        <button type="button" class="btn ghost" id="btnAddGroup">+ เพิ่มกลุ่ม Dock</button>
+        <button type="button" class="btn ghost" id="btnAddGroup">+ เพิ่มกลุ่ม เปลี่ยนเวลา</button>
+        <button type="button" class="btn ghost" id="btnAddShift">+ เพิ่มกลุ่ม เลื่อนเร็ว/ช้า</button>
         <label class="inline">เก็บรายการที่ส่งแล้วไว้ <input type="number" id="keepDays" min="1" max="60" value="7"> วัน</label>
       </div>
       <div class="err" id="rulesErr"></div>

@@ -15,6 +15,15 @@ const DEFAULT_RULES = {
   ],
 };
 
+// shift rule: earlier / later in 30-minute steps, up to 4 hours
+const SHIFT_STEPS = [];
+for (let m = -240; m <= 240; m += 30) if (m) SHIFT_STEPS.push(m);
+function shiftLabel(min) {
+  const a = Math.abs(min), h = Math.floor(a / 60), mm = a % 60;
+  const t = [h ? `${h} ชม.` : '', mm ? `${mm} นาที` : ''].filter(Boolean).join(' ');
+  return `${min < 0 ? 'เร็วขึ้น' : 'ช้าลง'} ${t}`;
+}
+
 const S = {
   data: null, rules: DEFAULT_RULES, slideMap: new Map(), user: null,
   wh: 'ALL', status: 'ALL', win: null, search: '', limit: 300, lastRows: [],
@@ -101,7 +110,8 @@ function renderSources() {
   }
   const g = S.rules.groups || [];
   $('#rulesMeta').textContent = g.length
-    ? g.map((x) => `${x.docks.join(',')}: ${x.map.map((m) => `${m.orig}→${m.slide}`).join(' / ')}`).join(' | ')
+    ? g.map((x) => `${x.docks.join(',')}: ${x.type === 'shift' ? shiftLabel(x.shift)
+      : x.map.map((m) => `${m.orig}→${m.slide}`).join(' / ')}`).join(' | ')
     : 'ยังไม่มีกฎ';
 }
 
@@ -311,22 +321,41 @@ function openRules() {
   $('#rulesErr').textContent = '';
   $('#dlgRules').showModal();
 }
+// docks seen in the loaded WMS data, for the quick-pick chips
+function knownDocks() {
+  const set = new Set();
+  for (const wh of WHS) for (const r of (S.data && S.data[wh].data) || []) if (r.d) set.add(String(r.d).toUpperCase());
+  for (const g of draft.groups) g.docks.forEach((d) => set.add(d));
+  return [...set].sort();
+}
 function drawRules() {
-  $('#rulesBody').innerHTML = draft.groups.map((g, gi) => `<div class="rgroup" data-g="${gi}">
-    <div class="rgroup-h"><b>Dock</b><input type="text" class="docks" value="${esc(g.docks.join(','))}" placeholder="เช่น S0,S2,S7,S9">
-      <button type="button" class="icon-btn admin-only" data-delg="${gi}" title="ลบกลุ่ม">✕</button></div>
-    <div class="rmap"><span class="hd">Original Due (WMS)</span><span class="hd">Slide Due</span><span></span>
+  const docks = knownDocks();
+  $('#rulesBody').innerHTML = draft.groups.map((g, gi) => {
+    const shift = g.type === 'shift';
+    const picks = docks.length ? `<div class="dock-picks">${docks.map((d) =>
+      `<button type="button" class="chip${g.docks.includes(d) ? ' on' : ''}" data-dock="${gi}:${esc(d)}">${esc(d)}</button>`).join('')}</div>` : '';
+    const body = shift
+      ? `<label class="inline">เลื่อน Due ทุกเวลา <select class="shift">${SHIFT_STEPS.map((m) =>
+          `<option value="${m}"${m === g.shift ? ' selected' : ''}>${shiftLabel(m)}</option>`).join('')}</select></label>`
+      : `<div class="rmap"><span class="hd">Original Due (WMS)</span><span class="hd">Slide Due</span><span></span>
       ${g.map.map((m, mi) => `<input type="time" class="orig" data-m="${mi}" value="${m.orig}"><input type="time" class="slide" data-m="${mi}" value="${m.slide}">
         <button type="button" class="icon-btn admin-only" data-delm="${gi}:${mi}" title="ลบแถว">✕</button>`).join('')}
     </div>
-    <button type="button" class="btn ghost admin-only" data-addm="${gi}" style="margin-top:6px">+ เพิ่มเวลา</button>
-  </div>`).join('') || '<p class="hint">ยังไม่มีกฎ</p>';
+    <button type="button" class="btn ghost admin-only" data-addm="${gi}" style="margin-top:6px">+ เพิ่มเวลา</button>`;
+    return `<div class="rgroup${shift ? ' shift' : ''}" data-g="${gi}">
+    <div class="rgroup-h"><span class="rtype">${shift ? 'เลื่อนเร็ว/ช้า' : 'เปลี่ยนเวลา'}</span><b>Dock</b>
+      <input type="text" class="docks" value="${esc(g.docks.join(','))}" placeholder="เช่น S0,S2,S7,S9">
+      <button type="button" class="icon-btn admin-only" data-delg="${gi}" title="ลบกลุ่ม">✕</button></div>
+    ${picks}${body}
+  </div>`;
+  }).join('') || '<p class="hint">ยังไม่มีกฎ</p>';
 }
 function readRules() {
   $$('#rulesBody .rgroup').forEach((el) => {
     const g = draft.groups[+el.dataset.g];
     g.docks = el.querySelector('.docks').value.split(/[,\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
-    g.map = g.map.map((m, mi) => ({ orig: el.querySelector(`.orig[data-m="${mi}"]`).value, slide: el.querySelector(`.slide[data-m="${mi}"]`).value }));
+    if (g.type === 'shift') g.shift = Number(el.querySelector('.shift').value);
+    else g.map = g.map.map((m, mi) => ({ orig: el.querySelector(`.orig[data-m="${mi}"]`).value, slide: el.querySelector(`.slide[data-m="${mi}"]`).value }));
   });
 }
 
@@ -379,15 +408,22 @@ function bind() {
     if (t.dataset.delg) draft.groups.splice(+t.dataset.delg, 1);
     else if (t.dataset.addm) draft.groups[+t.dataset.addm].map.push({ orig: '', slide: '' });
     else if (t.dataset.delm) { const [g, m] = t.dataset.delm.split(':').map(Number); draft.groups[g].map.splice(m, 1); }
+    else if (t.dataset.dock) {
+      if (!S.user) return;
+      const i = t.dataset.dock.indexOf(':'), g = draft.groups[+t.dataset.dock.slice(0, i)], d = t.dataset.dock.slice(i + 1);
+      g.docks = g.docks.includes(d) ? g.docks.filter((x) => x !== d) : [...g.docks, d];
+    }
     else return;
     drawRules();
   });
   $('#btnAddGroup').addEventListener('click', () => { readRules(); draft.groups.push({ docks: [], map: [{ orig: '', slide: '' }] }); drawRules(); });
+  $('#btnAddShift').addEventListener('click', () => { readRules(); draft.groups.push({ type: 'shift', docks: [], shift: -30 }); drawRules(); });
   $('#btnSaveRules').addEventListener('click', async () => {
     readRules();
-    const bad = draft.groups.some((g) => !g.docks.length || g.map.some((m) => !/^\d{2}:\d{2}$/.test(m.orig) || !/^\d{2}:\d{2}$/.test(m.slide)));
+    const bad = draft.groups.some((g) => !g.docks.length || (g.type === 'shift' ? !SHIFT_STEPS.includes(g.shift)
+      : g.map.some((m) => !/^\d{2}:\d{2}$/.test(m.orig) || !/^\d{2}:\d{2}$/.test(m.slide))));
     if (bad) { $('#rulesErr').textContent = 'กรุณาใส่ Dock และเวลาให้ครบทุกแถว'; return; }
-    draft.groups = draft.groups.filter((g) => g.map.length);
+    draft.groups = draft.groups.filter((g) => g.type === 'shift' || g.map.length);
     draft.keepDays = Math.max(1, Math.min(60, Number($('#keepDays').value) || 7));
     try { await store.saveRules(draft); $('#dlgRules').close(); toast('บันทึกกฎแล้ว'); await reload(); }
     catch (err) { $('#rulesErr').textContent = 'บันทึกไม่สำเร็จ: ' + err.message; }

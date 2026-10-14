@@ -27,6 +27,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    - Order NOT in DataSlide → Dock rule if Dock is in a group and WMS due time equals the rule's original time
      (slide time earlier than original = next day); otherwise WMS due.
    - Default Dock rules: S0,S2,S7,S9: 07:30→08:30, 08:30→09:30 · S5,S6: 07:30→09:30, 08:30→10:30 (editable in the app).
+   - Second rule type "shift" (`{type:'shift', docks, shift}`): pick Dock(s) and move ANY WMS due earlier/later in
+     30-min steps (±4 h). Time-map rules are checked first; shift applies only if no time-map rule matched.
 2. **Shipped / Complete** = Shipping Confirm `CONFIRMED`, or Shipping Time present AND shipping Truck License
    (the 2nd `Truck License` column, column Y) not blank and not all zeros.
 3. **Scanned, not loaded (ยิงแล้ว ยังไม่ขึ้นรถ)** = Shipping Time present but no valid truck → counts as NOT shipped.
