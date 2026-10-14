@@ -203,6 +203,12 @@ export async function parseSlideFile(file) {
 }
 
 // ---------- WMS export ----------
+// Shipping No. is column AC; find it by name, else take AC if its header mentions "ship"
+function shippingNoCol(H) {
+  const c = colIndex(H, 'Shipping No.');
+  if (c >= 0) return c;
+  return norm(H[28]).includes('ship') ? 28 : -1;
+}
 export async function parseWmsFile(file) {
   const rows = await readTable(file, ['Order No.', 'Window Name']);
   const h = findHeader(rows, ['Order No.', 'Window Name']);
@@ -219,7 +225,7 @@ export async function parseWmsFile(file) {
     dd: need('Due Date'), dt: need('Due Time'), st: need('StockIn Time'), sh: need('Shipping Time'),
     rf: need('RFID No.'), cf: need('Shipping Confirm'), tr: need('Truck License', 2), bx: need('Recept Box Count'),
     ro: colIndex(H, 'Recept Output No.'),
-    sn: colIndex(H, 'Shipping No.'), // optional: one Shipping No. = one truck trip
+    sn: shippingNoCol(H), // optional: one Shipping No. = one truck (column AC)
   };
   const out = [];
   for (let i = h + 1; i < rows.length; i++) {

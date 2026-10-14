@@ -79,10 +79,12 @@
 
     <section class="panel">
       <div class="panel-h">
-        <h2>สรุปเที่ยวรถ (Shipping No.) <span id="tripCount" class="muted"></span></h2>
-        <span class="hint">1 Shipping No. = 1 เที่ยว · คลิกแถวเพื่อดูรายละเอียดของเที่ยวนั้น</span>
+        <h2>สรุปรถ (Shipping No.) <span id="tripCount" class="muted"></span></h2>
+        <span class="hint">1 Shipping No. = รถ 1 คัน · เลข 202610144D003 = วันที่ 2026-10-14 · WH4 · กะเช้า (D) / กะดึก (N) · Trip 003 · คลิกแถวเพื่อดูรายละเอียด</span>
       </div>
-      <div class="table-wrap short"><table id="tblTrip" class="tbl"></table></div>
+      <div id="tripTiles" class="kpi-row trip-tiles"></div>
+      <div class="table-wrap"><table id="tblTripSum" class="tbl"></table></div>
+      <div class="table-wrap short" style="margin-top:10px"><table id="tblTrip" class="tbl"></table></div>
     </section>
 
     <section class="panel">

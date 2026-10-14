@@ -101,14 +101,29 @@ export function byWindow(rows) {
   });
 }
 
-// group by Shipping No. (one truck trip); rows without a Shipping No. are skipped
+// Shipping No. = one truck: YYYYMMDD + WH digit + shift (D/N) + trip no., e.g. 202610144D003
+// D = 07:30–19:59 of that date, N = 20:00 of that date – 07:29 next day
+export function parseTrip(sn) {
+  const m = /^(\d{4})(\d{2})(\d{2})(\d)([DN])(\d+)$/i.exec(String(sn || '').trim());
+  if (!m) return null;
+  const [y, mo, d] = [+m[1], +m[2] - 1, +m[3]];
+  const shift = m[5].toUpperCase();
+  const start = shift === 'D' ? new Date(y, mo, d, 7, 30) : new Date(y, mo, d, 20, 0);
+  const end = shift === 'D' ? new Date(y, mo, d, 20, 0) : new Date(y, mo, d + 1, 7, 30);
+  if (start.getDate() !== d) return null; // invalid date
+  return { date: new Date(y, mo, d), whDigit: m[4], shift, no: m[6], start, end };
+}
+
+// group by Shipping No. (one truck); rows without a Shipping No. are skipped.
+// left (ส่งแล้ว) = any row on the truck shipped; late = left and a row shipped after its due;
+// overdue = not left yet and a row's due has passed.
 export function byTrip(rows) {
   const g = new Map();
   for (const r of rows) {
     if (!r.sn) continue;
     if (!g.has(r.sn)) {
-      g.set(r.sn, { sn: r.sn, wh: new Set(), trucks: new Set(), wins: new Set(), docks: new Set(),
-        p: new Set(), r: new Set(), box: 0, rows: 0, done: 0, late: 0, maxLate: 0, first: null, last: null });
+      g.set(r.sn, { sn: r.sn, info: parseTrip(r.sn), wh: new Set(), trucks: new Set(), wins: new Set(), docks: new Set(),
+        p: new Set(), r: new Set(), box: 0, rows: 0, done: 0, lateRows: 0, maxLate: 0, overdue: 0, first: null, last: null });
     }
     const x = g.get(r.sn);
     if (r.wh) x.wh.add(r.wh);
@@ -118,14 +133,27 @@ export function byTrip(rows) {
     (r.rk ? x.r : x.p).add(r.pl || r.k);
     x.box += r.bx; x.rows++;
     if (r.done) x.done++;
-    if (r.st === ST.DONE_LATE) { x.late++; x.maxLate = Math.max(x.maxLate, r.lateMin || 0); }
+    if (r.st === ST.DONE_LATE) { x.lateRows++; x.maxLate = Math.max(x.maxLate, r.lateMin || 0); }
+    if (r.st === ST.OVERDUE) x.overdue++;
     if (r.shipT) {
       if (!x.first || r.shipT < x.first) x.first = r.shipT;
       if (!x.last || r.shipT > x.last) x.last = r.shipT;
     }
   }
-  return [...g.values()].sort((a, b) => (a.last ? a.last.getTime() : Infinity) - (b.last ? b.last.getTime() : Infinity)
-    || a.sn.localeCompare(b.sn));
+  for (const x of g.values()) {
+    x.left = x.done > 0;
+    x.late = x.left && x.lateRows > 0;
+    x.od = !x.left && x.overdue > 0;
+  }
+  const t = (x) => (x.info ? x.info.start.getTime() : Infinity);
+  return [...g.values()].sort((a, b) => t(a) - t(b) || a.sn.localeCompare(b.sn));
+}
+
+// totals for a list of trucks
+export function tripTotals(list) {
+  const left = list.filter((x) => x.left);
+  return { used: list.length, left: left.length, remain: list.length - left.length,
+    late: left.filter((x) => x.late).length, od: list.filter((x) => x.od).length };
 }
 
 // merge a new WMS upload with stored rows: keep completed rows that are not in the new file,

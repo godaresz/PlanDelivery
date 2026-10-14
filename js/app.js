@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, byWindow, byTrip, mergeWms, ST } from './logic.js';
+import { evaluate, byWindow, byTrip, tripTotals, mergeWms, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -122,10 +122,11 @@ function currentRows() {
   const end = endIn && new Date(endIn.getTime() + 60000); // end minute is inclusive (19:59 covers 19:59:xx)
   const backlog = $('#fBacklog').checked;
   const q = S.search.trim().toLowerCase();
-  const out = {};
+  const out = {}, full = {};
   for (const wh of WHS) {
     const rows = (S.data && S.data[wh].data) || [];
     let ev = evaluate(rows, S.slideMap, S.rules.groups || [], now).map((r) => ({ ...r, wh }));
+    full[wh] = ev;
     ev = ev.filter((r) => {
       if (!r.due) return true;
       if (start && end && r.due >= start && r.due < end) return true;
@@ -137,7 +138,23 @@ function currentRows() {
     }
     out[wh] = ev;
   }
+  S.view = { start, end, backlog, full };
   return out;
+}
+
+// trucks to show: those whose shift (from the Shipping No.) overlaps the view range, plus — with backlog on —
+// earlier trucks that have not left. Unparsed numbers fall back to the rows in view.
+// Trucks are built from ALL rows so a truck's totals are complete; a search narrows to trucks in the result.
+function tripsInView(whs, viewRows) {
+  const { start, end, backlog, full } = S.view;
+  const inView = new Set(viewRows.map((r) => r.sn).filter(Boolean));
+  const q = S.search.trim();
+  return byTrip(whs.flatMap((wh) => full[wh])).filter((x) => {
+    if (q) return inView.has(x.sn);
+    if (!x.info || !start || !end) return inView.has(x.sn);
+    if (x.info.start < end && x.info.end > start) return true;
+    return backlog && !x.left && x.info.start < start;
+  });
 }
 
 function render() {
@@ -147,29 +164,27 @@ function render() {
   renderKpis(all, scope);
   const rows = scope.flatMap((wh) => all[wh]);
   renderWindows(rows);
-  renderTrips(rows);
+  renderTrips(tripsInView(scope, rows), rows);
   renderDetail(rows);
 }
 
 function kpiCalc(rows) {
   const k = { od: { p: new Set(), r: new Set(), b: 0 }, pe: { p: new Set(), r: new Set(), b: 0 },
-    sc: { p: new Set(), b: 0 }, dn: { p: new Set(), r: new Set(), b: 0, late: 0 },
-    trip: { done: new Set(), open: new Set() } };
+    sc: { p: new Set(), b: 0 }, dn: { p: new Set(), r: new Set(), b: 0, late: 0 } };
   for (const r of rows) {
     const pal = r.pl || r.k;
     const t = r.st === ST.OVERDUE ? k.od : r.st === ST.PENDING ? k.pe : k.dn;
     (r.rk ? t.r : t.p).add(pal); t.b += r.bx;
     if (r.st === ST.DONE_LATE) k.dn.late++;
     if (r.scanned) { k.sc.p.add(pal); k.sc.b += r.bx; }
-    if (r.sn) (r.done ? k.trip.done : k.trip.open).add(r.sn);
   }
-  for (const sn of k.trip.done) k.trip.open.delete(sn); // a trip counts as left once any row on it is shipped
   return k;
 }
 
 function renderKpis(all, scope) {
   $('#kpis').innerHTML = scope.map((wh) => {
     const k = kpiCalc(all[wh]);
+    const t = tripTotals(tripsInView([wh], all[wh]));
     const tot = (x) => x.p.size + (x.r ? x.r.size : 0);
     const T = tot(k.od) + tot(k.pe) + tot(k.dn) || 1;
     const meta = S.data[wh].meta;
@@ -184,8 +199,8 @@ function renderKpis(all, scope) {
           <div class="det">${k.sc.b.toLocaleString()} กล่อง (นับรวมใน 2 ช่องแรก)</div></div>
         <div class="kpi done"><div class="lbl">ส่งแล้ว</div><div class="val">${tot(k.dn)}</div>
           <div class="det">${k.dn.p.size} Pallet · ${k.dn.r.size} Rack · ช้า ${k.dn.late} แถว</div></div>
-        <div class="kpi trip"><div class="lbl">เที่ยวรถ (Shipping No.)</div><div class="val">${k.trip.done.size}</div>
-          <div class="det">ออกแล้ว${k.trip.open.size ? ` · ยิงแล้วยังไม่ปิด ${k.trip.open.size} เที่ยว` : ''}</div></div>
+        <div class="kpi trip"><div class="lbl">ใช้รถ (Shipping No.)</div><div class="val">${t.used} <small>คัน</small></div>
+          <div class="det">ส่งแล้ว ${t.left} · เหลือ ${t.remain} · <span class="${t.late ? 'c-late' : ''}">ช้า ${t.late}</span></div></div>
       </div>
       <div class="prog" title="สัดส่วน Pallet+Rack">
         <span style="width:${(tot(k.dn) / T) * 100}%;background:var(--c-done)"></span>
@@ -222,7 +237,7 @@ function renderWindows(rows) {
       ${showWh ? '<th>WH</th>' : ''}<th>Window Name</th><th>Dock</th><th>Supplier</th>
       <th class="n">เลยกำหนด<br>Pallet / Rack</th><th class="n">รอส่ง<br>Pallet / Rack</th>
       <th class="n">ยิงแล้ว<br>ยังไม่ขึ้นรถ</th><th class="n">ส่งแล้ว<br>Pallet / Rack</th>
-      <th class="n">เที่ยวรถ<br>(Shipping No.)</th><th class="n">กล่องค้าง<br>(Recept Box)</th><th>Due เร็วสุด<br>(ยังไม่ส่ง)</th><th>Due ช้าสุด<br>(ยังไม่ส่ง)</th></tr></thead>
+      <th class="n">รถ (คัน)<br>Shipping No.</th><th class="n">กล่องค้าง<br>(Recept Box)</th><th>Due เร็วสุด<br>(ยังไม่ส่ง)</th><th>Due ช้าสุด<br>(ยังไม่ส่ง)</th></tr></thead>
     <tbody>${body || `<tr><td colspan="12" class="hint">ไม่มีข้อมูลในช่วงเวลานี้</td></tr>`}</tbody>
     <tfoot><tr>${showWh ? '<td></td>' : ''}<td>รวม</td><td></td><td></td>
       <td class="n">${tp.od[0]} / ${tp.od[1]}</td><td class="n">${tp.pe[0]} / ${tp.pe[1]}</td>
@@ -232,31 +247,59 @@ function renderWindows(rows) {
   }));
 }
 
-function renderTrips(rows) {
-  const g = byTrip(rows);
+const SHIFT_TH = { D: 'กะเช้า', N: 'กะดึก' };
+const dmy = (d) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+function tripStatus(x) {
+  if (x.left) {
+    const part = x.done < x.rows ? ` (ขึ้นแล้ว ${x.done}/${x.rows})` : '';
+    return x.late ? `<span class="pill done_late${x.maxLate >= 15 ? ' big' : ''}">ส่งแล้ว ช้า ${dur(x.maxLate)}${part}</span>`
+      : `<span class="pill done_on">ส่งแล้ว ตรงเวลา${part}</span>`;
+  }
+  return x.od ? '<span class="pill overdue">ยังไม่ออก · เลยกำหนด</span>' : '<span class="pill pending">ยังไม่ออก</span>';
+}
+function renderTrips(list, rows) {
   const showWh = S.wh === 'ALL';
-  const anySn = rows.some((r) => r.sn);
-  let tp = { p: 0, r: 0, b: 0, late: 0 };
-  const body = g.map((x) => {
-    tp.p += x.p.size; tp.r += x.r.size; tp.b += x.box; if (x.late) tp.late++;
-    const st = x.done === x.rows
-      ? (x.late ? `<span class="pill done_late${x.maxLate >= 15 ? ' big' : ''}">ออกแล้ว · ช้า ${x.late} แถว</span>` : '<span class="pill done_on">ออกแล้ว</span>')
-      : x.done ? `<span class="pill scan">ออกแล้วบางส่วน (${x.done}/${x.rows})</span>` : '<span class="pill scan">ยิงแล้ว ยังไม่ขึ้นรถ</span>';
-    return `<tr class="clickable" data-sn="${esc(x.sn)}">
+  const T = tripTotals(list);
+  const tile = (cls, lbl, v, det = '') => `<div class="kpi ${cls}"><div class="lbl">${lbl}</div><div class="val">${v} <small>คัน</small></div><div class="det">${det}</div></div>`;
+  $('#tripTiles').innerHTML = list.length ? [
+    tile('trip', 'ใช้รถทั้งหมด', T.used),
+    tile('done', 'ส่งแล้ว', T.left, `ตรงเวลา ${T.left - T.late} · ช้า ${T.late}`),
+    tile('pending', 'เหลือ (ยังไม่ออก)', T.remain, T.od ? `เลยกำหนดแล้ว ${T.od} คัน` : ''),
+    tile('overdue', 'ส่งช้า', T.late, T.left ? `${Math.round((T.late / T.left) * 100)}% ของที่ส่งแล้ว` : ''),
+  ].join('') : '';
+
+  // by date / shift / WH from the Shipping No.
+  const grp = new Map();
+  for (const x of list) {
+    const key = x.info ? `${x.info.date.getTime()}|${x.info.shift}|${[...x.wh].join(',')}` : `~|?|${[...x.wh].join(',')}`;
+    if (!grp.has(key)) grp.set(key, { info: x.info, wh: [...x.wh].join(', '), list: [] });
+    grp.get(key).list.push(x);
+  }
+  const gs = [...grp.values()];
+  $('#tblTripSum').innerHTML = gs.length ? `<thead><tr><th>วันที่</th><th>กะ</th><th>WH</th><th class="n">ใช้รถ</th><th class="n">ส่งแล้ว</th>
+      <th class="n">เหลือ</th><th class="n">ช้า</th><th class="n">ยังไม่ออก+เลยกำหนด</th></tr></thead>
+    <tbody>${gs.map((g) => { const t = tripTotals(g.list); return `<tr>
+      <td class="t">${g.info ? dmy(g.info.date) : '-'}</td><td>${g.info ? SHIFT_TH[g.info.shift] : 'อ่านเลขไม่ได้'}</td><td>${esc(g.wh)}</td>
+      <td class="n"><b>${t.used}</b></td><td class="n c-dn">${n0(t.left)}</td><td class="n c-pe">${n0(t.remain)}</td>
+      <td class="n c-od">${n0(t.late)}</td><td class="n c-od">${n0(t.od)}</td></tr>`; }).join('')}</tbody>
+    <tfoot><tr><td>รวม</td><td></td><td></td><td class="n">${T.used}</td><td class="n">${T.left}</td><td class="n">${T.remain}</td>
+      <td class="n">${T.late}</td><td class="n">${T.od}</td></tr></tfoot>` : '';
+
+  const anySn = WHS.some((wh) => S.view.full[wh].some((r) => r.sn));
+  const cols = showWh ? 11 : 10;
+  $('#tripCount').textContent = list.length ? `${list.length.toLocaleString()} คัน` : '';
+  $('#tblTrip').innerHTML = `<thead><tr>${showWh ? '<th>WH</th>' : ''}<th>Shipping No.</th><th>วันที่</th><th>กะ</th><th class="n">Trip</th>
+      <th>Truck License</th><th>Window Name</th><th class="n">Pallet / Rack</th><th class="n">กล่อง</th><th>Shipping Time</th><th>สถานะ</th></tr></thead>
+    <tbody>${list.map((x) => `<tr class="clickable${S.search === x.sn ? ' sel' : ''}" data-sn="${esc(x.sn)}">
       ${showWh ? `<td>${[...x.wh].sort().join(', ')}</td>` : ''}
-      <td class="t"><b>${esc(x.sn)}</b></td><td class="t">${esc([...x.trucks].join(', ')) || '<span class="z">-</span>'}</td>
-      <td>${esc([...x.wins].sort().join(', '))}</td><td>${esc([...x.docks].sort().join(', '))}</td>
+      <td class="t"><b>${esc(x.sn)}</b></td><td class="t">${x.info ? dmy(x.info.date) : '-'}</td>
+      <td>${x.info ? SHIFT_TH[x.info.shift] : '-'}</td><td class="n">${x.info ? x.info.no : '-'}</td>
+      <td class="t">${esc([...x.trucks].join(', ')) || '<span class="z">-</span>'}</td>
+      <td>${esc([...x.wins].sort().join(', '))}</td>
       <td class="n">${n0(x.p.size)} / ${n0(x.r.size)}</td><td class="n">${x.box.toLocaleString()}</td>
-      <td class="t">${fmtShow(x.first)}${x.last && x.first && x.last - x.first >= 60000 ? ` – ${fmtShow(x.last)}` : ''}</td><td>${st}</td></tr>`;
-  }).join('');
-  const cols = showWh ? 9 : 8;
-  $('#tripCount').textContent = g.length ? `${g.length.toLocaleString()} เที่ยว` : '';
-  $('#tblTrip').innerHTML = `<thead><tr>${showWh ? '<th>WH</th>' : ''}<th>Shipping No.</th><th>Truck License</th><th>Window Name</th><th>Dock</th>
-      <th class="n">Pallet / Rack</th><th class="n">กล่อง</th><th>Shipping Time</th><th>สถานะ</th></tr></thead>
-    <tbody>${body || `<tr><td colspan="${cols}" class="hint">${anySn || !rows.length ? 'ไม่มีเที่ยวรถในช่วงเวลานี้'
-      : 'ไฟล์ WMS ที่อัปโหลดไว้ยังไม่มีคอลัมน์ Shipping No. — อัปโหลดไฟล์ใหม่ที่มีคอลัมน์นี้'}</td></tr>`}</tbody>
-    ${g.length ? `<tfoot><tr>${showWh ? '<td></td>' : ''}<td>รวม ${g.length} เที่ยว</td><td></td><td></td><td></td>
-      <td class="n">${tp.p} / ${tp.r}</td><td class="n">${tp.b.toLocaleString()}</td><td></td><td>${tp.late ? `ช้า ${tp.late} เที่ยว` : ''}</td></tr></tfoot>` : ''}`;
+      <td class="t">${fmtShow(x.last)}</td><td>${tripStatus(x)}</td></tr>`).join('')
+      || `<tr><td colspan="${cols}" class="hint">${anySn || !rows.length ? 'ไม่มีรถในช่วงเวลานี้'
+        : 'ไฟล์ WMS ที่อัปโหลดไว้ยังไม่มีคอลัมน์ Shipping No. (AC) — อัปโหลดไฟล์ใหม่'}</td></tr>`}</tbody>`;
   $$('#tblTrip tr.clickable').forEach((tr) => tr.addEventListener('click', () => {
     const v = S.search === tr.dataset.sn ? '' : tr.dataset.sn; // click again to clear
     S.search = v; $('#fSearch').value = v; S.limit = 300; render();

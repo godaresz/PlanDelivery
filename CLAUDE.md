@@ -7,6 +7,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 - Static site, vanilla JS ES modules, no build step. `index.html`, `styles.css`, `js/*.js`.
 - Data: Firebase Firestore project `plandelivery-6ef10` (Spark free plan — keep reads/writes low).
 - Hosting: Netlify connected to this GitHub repo; every push to `main` deploys (`netlify.toml`).
+- **Do not push to `main` until the user has seen screenshots and approved.** Work on the feature branch.
 - Auth: Firebase Email/Password. Anyone can view; only signed-in users can upload / edit rules (`firestore.rules`).
 - SheetJS (`xlsx@0.18.5` from jsdelivr) parses Excel; CSV is parsed by our own parser (keeps 24-digit RFID as text).
 - `firebase-config.js` with empty `apiKey` = DEMO mode (localStorage only) — useful for local testing.
@@ -42,8 +43,10 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    `keepDays` (default 7, set in rules dialog) are dropped.
 7. View filter: start/end datetime, end minute inclusive (shift buttons day 07:30–19:59 / night 20:00–07:29) + optional backlog of open rows due before start.
 8. WH1 Window Names start with `1`, WH4 with `4` (used to split the WMS upload).
-9. **Trips (เที่ยวรถ)** = distinct `Shipping No.` (optional WMS column). A trip counts as left (ออกแล้ว) once any
-   row on it is shipped; otherwise it is scanned-not-closed. Shown as a KPI card, a Window column and the trip table.
+9. **Trucks (รถ)** = distinct `Shipping No.` (WMS column AC), format `YYYYMMDD` + WH digit + shift `D`/`N` + trip no.,
+   e.g. `202610144D003`. D = 07:30–19:59 of that date, N = 20:00–07:29 next day. Truck shown if its shift overlaps the
+   view range (+ earlier not-left trucks when backlog is on). Left (ส่งแล้ว) = any row on it shipped; late (ช้า) = left
+   and a row shipped after its due; remaining (เหลือ) = not left. Summary: used / left / remaining / late.
 
 ## UI colours (user's standard palette)
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED

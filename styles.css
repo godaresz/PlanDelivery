@@ -86,6 +86,10 @@ input[type=search] { min-width: 260px; flex: 1; }
 .kpi.scan { border-color: var(--c-scan); } .kpi.scan .val { color: #B45309; }
 .kpi.done { border-color: var(--c-done); } .kpi.done .val { color: #047857; }
 .kpi.trip { border-color: #7C3AED; } .kpi.trip .val { color: #6D28D9; }
+.kpi .val small { font-size: 12px; font-weight: 500; color: var(--ink-2); }
+.kpi .det .c-late { color: #B91C1C; font-weight: 600; }
+.trip-tiles { grid-template-columns: repeat(4, 1fr); margin-bottom: 10px; }
+.trip-tiles:empty { display: none; }
 .prog { height: 6px; background: #F3F4F6; border-radius: 99px; overflow: hidden; margin-top: 10px; display: flex; }
 .prog span { display: block; height: 100%; }
 
