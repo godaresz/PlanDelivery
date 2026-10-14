@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /shipcheck/{docId} {
+      // Anyone with the link can view. To require login for viewing too,
+      // change the next line to:  allow read: if request.auth != null;
+      allow read: if true;
+      // Only signed-in users (created in Firebase Authentication) can upload / edit rules
+      allow write: if request.auth != null;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

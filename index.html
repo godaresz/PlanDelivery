@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shipping Check WH1 / WH4</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="logo">SC</div>
+      <div>
+        <h1>Shipping Check</h1>
+        <div class="sub">WH1 · WH4 — เทียบ DataSlide / Due ใน WMS</div>
+      </div>
+    </div>
+    <div class="top-right">
+      <span id="clock" class="clock"></span>
+      <span id="modeBadge" class="badge"></span>
+      <button id="btnLogin" class="btn ghost">เข้าสู่ระบบ</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- data sources -->
+    <section class="panel sources">
+      <div class="src" id="srcSlide">
+        <div class="src-h"><span class="dot"></span>DataSlide</div>
+        <div class="src-meta">ยังไม่มีข้อมูล</div>
+        <label class="btn admin-only">อัปเดต DataSlide<input type="file" accept=".xlsx,.xls,.csv" data-kind="slide" hidden></label>
+      </div>
+      <div class="src" id="srcWH1">
+        <div class="src-h"><span class="dot"></span>WMS WH1</div>
+        <div class="src-meta">ยังไม่มีข้อมูล</div>
+        <label class="btn admin-only">อัปเดตไฟล์ WH1<input type="file" accept=".xlsx,.xls,.csv" data-kind="WH1" hidden></label>
+      </div>
+      <div class="src" id="srcWH4">
+        <div class="src-h"><span class="dot"></span>WMS WH4</div>
+        <div class="src-meta">ยังไม่มีข้อมูล</div>
+        <label class="btn admin-only">อัปเดตไฟล์ WH4<input type="file" accept=".xlsx,.xls,.csv" data-kind="WH4" hidden></label>
+      </div>
+      <div class="src rules-src">
+        <div class="src-h">กฎ Slide Due ตาม Dock</div>
+        <div class="src-meta" id="rulesMeta">-</div>
+        <button id="btnRules" class="btn ghost">ดู / แก้ไขกฎ</button>
+      </div>
+    </section>
+
+    <!-- filters -->
+    <section class="panel filters">
+      <div class="f-group">
+        <label>เวลาเริ่ม<input type="datetime-local" id="fStart"></label>
+        <label>เวลาจบ<input type="datetime-local" id="fEnd"></label>
+        <div class="quick">
+          <button class="chip" data-q="day">กะเช้า 07:30–19:30</button>
+          <button class="chip" data-q="night">กะดึก 19:30–07:30</button>
+          <button class="chip" data-q="today">วันนี้ทั้งวัน</button>
+        </div>
+      </div>
+      <div class="f-group">
+        <label class="check"><input type="checkbox" id="fBacklog" checked> รวมรายการค้างก่อนเวลาเริ่ม</label>
+        <div class="tabs" id="whTabs">
+          <button class="tab active" data-wh="ALL">ทั้งหมด</button>
+          <button class="tab" data-wh="WH1">WH1</button>
+          <button class="tab" data-wh="WH4">WH4</button>
+        </div>
+        <input type="search" id="fSearch" placeholder="ค้นหา Order / Supplier / Window / Pallet">
+      </div>
+    </section>
+
+    <section id="kpis" class="kpis"></section>
+
+    <section class="panel">
+      <div class="panel-h">
+        <h2>สรุปตาม Window Name</h2>
+        <span class="hint">คลิกแถวเพื่อดูรายละเอียดของ Window นั้น</span>
+      </div>
+      <div class="table-wrap"><table id="tblWin" class="tbl"></table></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-h">
+        <h2>รายละเอียด <span id="detailTitle" class="muted"></span></h2>
+        <div class="status-chips" id="stChips"></div>
+        <button id="btnExport" class="btn ghost">ส่งออก Excel</button>
+      </div>
+      <div class="table-wrap"><table id="tblDetail" class="tbl"></table></div>
+      <div class="more"><button id="btnMore" class="btn ghost" hidden>แสดงเพิ่ม</button></div>
+    </section>
+  </main>
+
+  <!-- login dialog -->
+  <dialog id="dlgLogin" class="dlg">
+    <form method="dialog" id="formLogin">
+      <h3>เข้าสู่ระบบ (สำหรับอัปเดตข้อมูล)</h3>
+      <label>อีเมล<input type="email" id="loginEmail" required autocomplete="username"></label>
+      <label>รหัสผ่าน<input type="password" id="loginPw" required autocomplete="current-password"></label>
+      <div class="err" id="loginErr"></div>
+      <div class="dlg-actions">
+        <button type="button" class="btn ghost" data-close>ยกเลิก</button>
+        <button type="submit" class="btn primary">เข้าสู่ระบบ</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- rules dialog -->
+  <dialog id="dlgRules" class="dlg wide">
+    <div>
+      <h3>กฎ Slide Due แยกตาม Dock</h3>
+      <p class="hint">ใช้เฉพาะรายการที่ <b>ไม่มีใน DataSlide</b> — ถ้า Dock ตรงกลุ่ม และเวลา Due ใน WMS ตรงกับ Original Due จะเลื่อนเป็นเวลา Slide Due ของวันเดียวกัน (ถ้าเวลาข้ามเที่ยงคืนจะเป็นวันถัดไป)</p>
+      <div id="rulesBody"></div>
+      <div class="rules-tools admin-only">
+        <button type="button" class="btn ghost" id="btnAddGroup">+ เพิ่มกลุ่ม Dock</button>
+        <label class="inline">เก็บรายการที่ส่งแล้วไว้ <input type="number" id="keepDays" min="1" max="60" value="7"> วัน</label>
+      </div>
+      <div class="err" id="rulesErr"></div>
+      <div class="dlg-actions">
+        <button type="button" class="btn ghost" data-close>ปิด</button>
+        <button type="button" class="btn primary admin-only" id="btnSaveRules">บันทึกกฎ</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
