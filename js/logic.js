@@ -156,7 +156,7 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
       x.dep = il.dt;
       x.lateMin = x.dueStart ? Math.round((il.dt - x.dueStart) / 60000) : null;
       x.late = x.left && x.lateMin > 0;
-      if (il.tr) x.trucks.add(il.tr);
+      if (il.tr) x.trucks = new Set([il.tr]); // ILMS licence is the real plate; WMS may hold a code
     } else {
       x.src = x.done ? 'WMS' : '';
       x.left = x.done > 0;

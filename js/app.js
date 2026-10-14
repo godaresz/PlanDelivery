@@ -170,7 +170,7 @@ function render() {
   renderKpis(all, scope);
   const rows = scope.flatMap((wh) => all[wh]);
   const trips = tripsInView(scope, rows);
-  renderWindows(rows);
+  renderWindows(rows, trips);
   renderTrips(trips, rows);
   renderOverview(rows, trips);
   renderDetail(rows);
@@ -223,7 +223,10 @@ function renderKpis(all, scope) {
   }).join('');
 }
 
-function renderWindows(rows) {
+// trucks column counts only the trucks shown on the truck page (by the shift in their Shipping No.),
+// so the totals match; rows loaded on trucks of other shifts still count as shipped pallets.
+function renderWindows(rows, trips) {
+  const tset = new Set(trips.map((x) => x.sn));
   const g = byWindow(rows);
   const showWh = S.wh === 'ALL';
   const pr = (x) => (x.p.size || x.r.size ? `${n0(x.p.size)} / ${n0(x.r.size)}` : '<span class="z">-</span>');
@@ -232,7 +235,8 @@ function renderWindows(rows) {
   const body = g.map((x) => {
     tp.od[0] += x.od.p.size; tp.od[1] += x.od.r.size; tp.pe[0] += x.pe.p.size; tp.pe[1] += x.pe.r.size;
     tp.dn[0] += x.dn.p.size; tp.dn[1] += x.dn.r.size; tp.sc += x.scan.size; tp.bo += x.boxOpen;
-    x.trips.forEach((t) => allTrips.add(t));
+    const wt = [...x.trips].filter((t) => tset.has(t));
+    wt.forEach((t) => allTrips.add(t));
     const wh = x.w.startsWith('4') ? 'WH4' : x.w.startsWith('1') ? 'WH1' : '';
     return `<tr class="clickable${S.win === x.w ? ' sel' : ''}" data-win="${esc(x.w)}">
       ${showWh ? `<td>${wh}</td>` : ''}
@@ -241,7 +245,7 @@ function renderWindows(rows) {
       <td class="n c-od">${pr(x.od)}</td><td class="n c-pe">${pr(x.pe)}</td>
       <td class="n c-sc">${x.scan.size ? x.scan.size : '<span class="z">-</span>'}</td>
       <td class="n c-dn">${pr(x.dn)}</td>
-      <td class="n">${x.trips.size || '<span class="z">-</span>'}</td>
+      <td class="n">${wt.length || '<span class="z">-</span>'}</td>
       <td class="n">${x.boxOpen ? x.boxOpen.toLocaleString() : '<span class="z">0</span>'}</td>
       <td class="t">${fmtShow(x.minOpen)}</td><td class="t">${fmtShow(x.maxOpen)}</td></tr>`;
   }).join('');
@@ -253,7 +257,8 @@ function renderWindows(rows) {
     <tbody>${body || `<tr><td colspan="12" class="hint">ไม่มีข้อมูลในช่วงเวลานี้</td></tr>`}</tbody>
     <tfoot><tr>${showWh ? '<td></td>' : ''}<td>รวม</td><td></td><td></td>
       <td class="n">${tp.od[0]} / ${tp.od[1]}</td><td class="n">${tp.pe[0]} / ${tp.pe[1]}</td>
-      <td class="n">${tp.sc}</td><td class="n">${tp.dn[0]} / ${tp.dn[1]}</td><td class="n">${allTrips.size}</td><td class="n">${tp.bo.toLocaleString()}</td><td></td><td></td></tr></tfoot>`;
+      <td class="n">${tp.sc}</td><td class="n">${tp.dn[0]} / ${tp.dn[1]}</td><td class="n">${allTrips.size}${trips.length > allTrips.size
+        ? `<div class="foot-note" title="รถของกะนี้ที่ขนเฉพาะของ Due นอกช่วงเวลานี้ (ส่งล่วงหน้า)">+${trips.length - allTrips.size} คัน = ${trips.length}</div>` : ''}</td><td class="n">${tp.bo.toLocaleString()}</td><td></td><td></td></tr></tfoot>`;
   $$('#tblWin tr.clickable').forEach((tr) => tr.addEventListener('click', () => {
     S.win = tr.dataset.win; S.status = 'ALL'; S.limit = 300; go('detail');
   }));
@@ -322,6 +327,17 @@ function renderTrips(list, rows) {
   const anySn = WHS.some((wh) => S.view.full[wh].some((r) => r.sn));
   const cols = showWh ? 12 : 11;
   $('#tripCount').textContent = list.length ? `${list.length.toLocaleString()} คัน` : '';
+  // trucks of other shifts that carried rows due in this range (shipped early / late)
+  const inList = new Set(list.map((x) => x.sn));
+  const other = [...new Set(rows.map((r) => r.sn).filter((sn) => sn && !inList.has(sn)))];
+  $('#tripOther').innerHTML = other.length ? `ไม่นับรวม: รถของกะอื่น <b>${other.length}</b> คัน ที่ขนของซึ่ง Due อยู่ในช่วงนี้ (ส่งก่อน/หลังกะ) —
+    ${other.sort().slice(0, 12).map((sn) => `<a href="#" data-sn="${esc(sn)}">${esc(sn)}</a>`).join(', ')}${other.length > 12 ? ' …' : ''}` : '';
+  const noRows = list.filter((x) => !rows.some((r) => r.sn === x.sn));
+  if (noRows.length) {
+    $('#tripOther').innerHTML += `${other.length ? '<br>' : ''}นับรวมแล้ว: รถ <b>${noRows.length}</b> คันของกะนี้ที่ขนเฉพาะของ Due นอกช่วงนี้ (ส่งล่วงหน้า) — `
+      + noRows.map((x) => `<a href="#" data-sn="${esc(x.sn)}">${esc(x.sn)}</a>`).join(', ');
+  }
+  $$('#tripOther a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openTruck(a.dataset.sn); }));
   $('#tblTrip').innerHTML = `<thead><tr>${showWh ? '<th>WH</th>' : ''}<th>Shipping No.</th><th>กะ</th><th class="n">Trip</th>
       <th>Truck License</th><th>Window Name</th><th class="n">Pallet / Rack</th><th class="n">กล่อง</th>
       <th>Due เริ่ม – จบ</th><th>ออกจริง</th><th class="n">เทียบ Due เริ่ม</th><th>สถานะ</th></tr></thead>
