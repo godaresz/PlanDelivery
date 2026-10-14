@@ -134,7 +134,9 @@ input[type=search] { min-width: 260px; flex: 1; }
 .rtype { font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #EEF2FF; color: #2563EB; }
 .dock-picks { display: flex; gap: 4px; flex-wrap: wrap; margin: 0 0 8px; }
 .dock-picks .chip { padding: 3px 9px; }
-.rgroup select.shift { font: inherit; padding: 4px 6px; }
+.shift-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.shift-row .seg { display: inline-flex; gap: 4px; }
+.shift-row input[type=number] { width: 70px; font: inherit; padding: 4px 6px; }
 .rules-tools { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 .icon-btn { border: 0; background: transparent; color: var(--c-overdue); cursor: pointer; font-size: 16px; }
 body:not(.is-admin) #rulesBody input { pointer-events: none; background: #F9FAFB; }

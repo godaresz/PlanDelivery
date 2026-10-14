@@ -27,18 +27,21 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    - Order NOT in DataSlide → Dock rule if Dock is in a group and WMS due time equals the rule's original time
      (slide time earlier than original = next day); otherwise WMS due.
    - Default Dock rules: S0,S2,S7,S9: 07:30→08:30, 08:30→09:30 · S5,S6: 07:30→09:30, 08:30→10:30 (editable in the app).
-   - Second rule type "shift" (`{type:'shift', docks, shift}`): pick Dock(s) and move ANY WMS due earlier/later in
-     30-min steps (±4 h). Time-map rules are checked first; shift applies only if no time-map rule matched.
+   - Second rule type "shift" (`{type:'shift', docks, shift}`, shift = signed minutes): pick Dock(s), press
+     เร็วขึ้น/ช้าลง and type any hours + minutes; moves ANY WMS due. Time-map rules are checked first; shift
+     applies only if no time-map rule matched.
 2. **Shipped / Complete** = Shipping Confirm `CONFIRMED`, or Shipping Time present AND shipping Truck License
    (the 2nd `Truck License` column, column Y) not blank and not all zeros.
 3. **Scanned, not loaded (ยิงแล้ว ยังไม่ขึ้นรถ)** = Shipping Time present but no valid truck → counts as NOT shipped.
 4. Not shipped: due < now → Overdue (เลยกำหนด), else Pending (รอส่ง).
 5. **Pallet / Rack** = distinct `Pallet No.`; RFID No. all zeros → Rack, otherwise Pallet. Boxes = sum of `Recept Box Count`.
-6. **Uploads**: DataSlide upload replaces all old slide data. WMS upload replaces open rows but KEEPS completed rows
+6. **Uploads**: DataSlide upload replaces all old slide data. WMS is ONE file for both warehouses, split by
+   Window Name (`1…` → WH1, `4…` → WH4, other rows skipped with a warning); a warehouse with no rows in the file
+   keeps its old data. Per warehouse, the upload replaces open rows but KEEPS completed rows
    from earlier uploads (shown as shipped) and never downgrades a completed row; completed rows older than
    `keepDays` (default 7, set in rules dialog) are dropped.
-7. View filter: start/end datetime (shift buttons 07:30–19:30 / 19:30–07:30) + optional backlog of open rows due before start.
-8. WH1 Window Names start with `1`, WH4 with `4` (upload warns on mismatch).
+7. View filter: start/end datetime, end minute inclusive (shift buttons day 07:30–19:59 / night 20:00–07:29) + optional backlog of open rows due before start.
+8. WH1 Window Names start with `1`, WH4 with `4` (used to split the WMS upload).
 
 ## UI colours (user's standard palette)
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED

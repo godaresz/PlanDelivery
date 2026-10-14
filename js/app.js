@@ -15,9 +15,7 @@ const DEFAULT_RULES = {
   ],
 };
 
-// shift rule: earlier / later in 30-minute steps, up to 4 hours
-const SHIFT_STEPS = [];
-for (let m = -240; m <= 240; m += 30) if (m) SHIFT_STEPS.push(m);
+// shift rule: signed minutes (negative = earlier)
 function shiftLabel(min) {
   const a = Math.abs(min), h = Math.floor(a / 60), mm = a % 60;
   const t = [h ? `${h} ชม.` : '', mm ? `${mm} นาที` : ''].filter(Boolean).join(' ');
@@ -53,13 +51,14 @@ function setRange(kind) {
   const at = (base, h, m, addDay = 0) => new Date(base.getFullYear(), base.getMonth(), base.getDate() + addDay, h, m);
   let s, e;
   const mins = now.getHours() * 60 + now.getMinutes();
-  if (kind === 'day') { s = at(d, 7, 30); e = at(d, 19, 30); }
+  // day 07:30–19:59, night 20:00–07:29 (end minute inclusive)
+  if (kind === 'day') { s = at(d, 7, 30); e = at(d, 19, 59); }
   else if (kind === 'night') {
     const base = mins < 450 ? at(d, 0, 0, -1) : d; // before 07:30 -> night that started yesterday
-    s = at(base, 19, 30); e = at(base, 7, 30, 1);
-  } else if (kind === 'today') { s = at(d, 0, 0); e = at(d, 0, 0, 1); }
+    s = at(base, 20, 0); e = at(base, 7, 29, 1);
+  } else if (kind === 'today') { s = at(d, 0, 0); e = at(d, 23, 59); }
   else { // auto: current shift
-    return setRange(mins >= 450 && mins < 1170 ? 'day' : 'night');
+    return setRange(mins >= 450 && mins < 1200 ? 'day' : 'night');
   }
   $('#fStart').value = toInput(s); $('#fEnd').value = toInput(e);
   $$('.quick .chip').forEach((c) => c.classList.toggle('on', c.dataset.q === kind));
@@ -103,11 +102,12 @@ function renderSources() {
   const sl = S.data.slide.meta;
   $('#srcSlide .src-meta').innerHTML = m(sl, sl ? `${sl.count.toLocaleString()} Order (มีวันเวลาใหม่ ${sl.valid.toLocaleString()})` : '');
   $('#srcSlide').classList.toggle('ok', !!sl);
-  for (const wh of WHS) {
+  $('#srcWMS .src-meta').innerHTML = WHS.map((wh) => {
     const mt = S.data[wh].meta;
-    $(`#src${wh} .src-meta`).innerHTML = m(mt, mt ? `${mt.count.toLocaleString()} แถว${mt.kept ? ` (เก็บที่ส่งแล้วจากรอบก่อน ${mt.kept})` : ''}` : '');
-    $(`#src${wh}`).classList.toggle('ok', !!mt);
-  }
+    return `<b>${wh}</b> ` + (mt ? `${esc(mt.fileName || '')}<br>อัปเดต ${fmtShowFull(new Date(mt.updatedAt))} · ${mt.count.toLocaleString()} แถว`
+      + (mt.kept ? ` (เก็บที่ส่งแล้วจากรอบก่อน ${mt.kept})` : '') : 'ยังไม่มีข้อมูล');
+  }).join('<br>');
+  $('#srcWMS').classList.toggle('ok', WHS.some((wh) => !!S.data[wh].meta));
   const g = S.rules.groups || [];
   $('#rulesMeta').textContent = g.length
     ? g.map((x) => `${x.docks.join(',')}: ${x.type === 'shift' ? shiftLabel(x.shift)
@@ -118,7 +118,8 @@ function renderSources() {
 // ---------- main render ----------
 function currentRows() {
   const now = new Date();
-  const start = fromInput($('#fStart').value), end = fromInput($('#fEnd').value);
+  const start = fromInput($('#fStart').value), endIn = fromInput($('#fEnd').value);
+  const end = endIn && new Date(endIn.getTime() + 60000); // end minute is inclusive (19:59 covers 19:59:xx)
   const backlog = $('#fBacklog').checked;
   const q = S.search.trim().toLowerCase();
   const out = {};
@@ -289,19 +290,32 @@ async function onUpload(e) {
         { fileName: file.name, count: res.orders.length, valid: res.validCount });
       toast(`อัปเดต DataSlide แล้ว: ${res.orders.length.toLocaleString()} Order (ล้างข้อมูลเดิมแล้ว)`);
     } else {
-      toast(`กำลังอ่านไฟล์ ${kind}…`, false, 60000);
+      toast('กำลังอ่านไฟล์ WMS…', false, 60000);
       const rows = await parseWmsFile(file);
       if (!rows.length) throw new Error('ไม่พบข้อมูลในไฟล์');
-      const prefix = kind === 'WH1' ? '1' : '4';
-      const wrong = rows.filter((r) => r.w && !r.w.startsWith(prefix)).length;
-      if (wrong > rows.length / 2 && !confirm(`Window Name ส่วนใหญ่ในไฟล์นี้ไม่ได้ขึ้นต้นด้วย ${prefix} — แน่ใจว่าเป็นไฟล์ของ ${kind}?`)) return;
+      // one file for both warehouses: split by Window Name (1… = WH1, 4… = WH4)
+      const split = { WH1: [], WH4: [] };
+      let other = 0;
+      for (const r of rows) {
+        const c = String(r.w || '').trim()[0];
+        if (c === '1') split.WH1.push(r); else if (c === '4') split.WH4.push(r); else other++;
+      }
+      const found = WHS.filter((wh) => split[wh].length);
+      if (!found.length) throw new Error('ไม่พบ Window Name ที่ขึ้นต้นด้วย 1 หรือ 4');
+      if (other && !confirm(`มี ${other.toLocaleString()} แถวที่ Window Name ไม่ได้ขึ้นต้นด้วย 1 หรือ 4 — จะข้ามแถวเหล่านี้ ดำเนินการต่อ?`)) return;
       const latest = await store.loadAll();
-      const oldRows = (latest[kind] && latest[kind].data) || [];
       const keepDays = Number(S.rules.keepDays) || 7;
-      const m = mergeWms(oldRows, rows, keepDays, new Date());
-      await store.saveWms(kind, m.rows, { fileName: file.name, count: m.rows.length, fromFile: rows.length, kept: m.kept });
-      toast(`อัปเดต ${kind} แล้ว: ${rows.length.toLocaleString()} แถวจากไฟล์` +
-        (m.kept ? ` + เก็บรายการที่ส่งแล้วจากรอบก่อน ${m.kept} แถว` : '') + (m.dropped ? ` (ลบที่ส่งแล้วเกิน ${keepDays} วัน ${m.dropped} แถว)` : ''), false, 7000);
+      const msgs = [];
+      for (const wh of found) { // a warehouse missing from the file keeps its old data
+        const oldRows = (latest[wh] && latest[wh].data) || [];
+        const m = mergeWms(oldRows, split[wh], keepDays, new Date());
+        await store.saveWms(wh, m.rows, { fileName: file.name, count: m.rows.length, fromFile: split[wh].length, kept: m.kept });
+        msgs.push(`${wh} ${split[wh].length.toLocaleString()} แถว` + (m.kept ? ` + เก็บที่ส่งแล้ว ${m.kept}` : '')
+          + (m.dropped ? ` (ลบที่ส่งแล้วเกิน ${keepDays} วัน ${m.dropped})` : ''));
+      }
+      const miss = WHS.filter((wh) => !split[wh].length);
+      toast(`อัปเดต WMS แล้ว: ${msgs.join(' · ')}` + (miss.length ? ` · ไม่มีข้อมูล ${miss.join(', ')} ในไฟล์ (คงข้อมูลเดิม)` : '')
+        + (other ? ` · ข้ามแถวอื่น ${other}` : ''), false, 9000);
     }
     await reload();
   } catch (err) {
@@ -332,11 +346,14 @@ function drawRules() {
   const docks = knownDocks();
   $('#rulesBody').innerHTML = draft.groups.map((g, gi) => {
     const shift = g.type === 'shift';
+    const dir = shiftDir(g);
     const picks = docks.length ? `<div class="dock-picks">${docks.map((d) =>
       `<button type="button" class="chip${g.docks.includes(d) ? ' on' : ''}" data-dock="${gi}:${esc(d)}">${esc(d)}</button>`).join('')}</div>` : '';
     const body = shift
-      ? `<label class="inline">เลื่อน Due ทุกเวลา <select class="shift">${SHIFT_STEPS.map((m) =>
-          `<option value="${m}"${m === g.shift ? ' selected' : ''}>${shiftLabel(m)}</option>`).join('')}</select></label>`
+      ? `<div class="shift-row">เลื่อน Due ทุกเวลา
+          <span class="seg"><button type="button" class="chip${dir < 0 ? ' on' : ''}" data-dir="${gi}:-1">เร็วขึ้น</button><button type="button" class="chip${dir > 0 ? ' on' : ''}" data-dir="${gi}:1">ช้าลง</button></span>
+          <input type="number" class="sh-h" min="0" step="1" value="${Math.floor(Math.abs(g.shift || 0) / 60)}"> ชม.
+          <input type="number" class="sh-m" min="0" max="59" step="1" value="${Math.abs(g.shift || 0) % 60}"> นาที</div>`
       : `<div class="rmap"><span class="hd">Original Due (WMS)</span><span class="hd">Slide Due</span><span></span>
       ${g.map.map((m, mi) => `<input type="time" class="orig" data-m="${mi}" value="${m.orig}"><input type="time" class="slide" data-m="${mi}" value="${m.slide}">
         <button type="button" class="icon-btn admin-only" data-delm="${gi}:${mi}" title="ลบแถว">✕</button>`).join('')}
@@ -350,11 +367,18 @@ function drawRules() {
   </div>`;
   }).join('') || '<p class="hint">ยังไม่มีกฎ</p>';
 }
+// -1 = earlier, 1 = later (draft keeps dir so the choice survives while the amount is 0)
+const shiftDir = (g) => g.dir || (g.shift > 0 ? 1 : -1);
 function readRules() {
   $$('#rulesBody .rgroup').forEach((el) => {
     const g = draft.groups[+el.dataset.g];
     g.docks = el.querySelector('.docks').value.split(/[,\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
-    if (g.type === 'shift') g.shift = Number(el.querySelector('.shift').value);
+    if (g.type === 'shift') {
+      const h = Math.max(0, Math.floor(Number(el.querySelector('.sh-h').value) || 0));
+      const m = Math.max(0, Math.floor(Number(el.querySelector('.sh-m').value) || 0));
+      g.dir = shiftDir(g);
+      g.shift = g.dir * (h * 60 + m);
+    }
     else g.map = g.map.map((m, mi) => ({ orig: el.querySelector(`.orig[data-m="${mi}"]`).value, slide: el.querySelector(`.slide[data-m="${mi}"]`).value }));
   });
 }
@@ -408,6 +432,12 @@ function bind() {
     if (t.dataset.delg) draft.groups.splice(+t.dataset.delg, 1);
     else if (t.dataset.addm) draft.groups[+t.dataset.addm].map.push({ orig: '', slide: '' });
     else if (t.dataset.delm) { const [g, m] = t.dataset.delm.split(':').map(Number); draft.groups[g].map.splice(m, 1); }
+    else if (t.dataset.dir) {
+      if (!S.user) return;
+      const [g, sign] = t.dataset.dir.split(':').map(Number);
+      draft.groups[g].dir = sign;
+      draft.groups[g].shift = sign * Math.abs(draft.groups[g].shift || 0);
+    }
     else if (t.dataset.dock) {
       if (!S.user) return;
       const i = t.dataset.dock.indexOf(':'), g = draft.groups[+t.dataset.dock.slice(0, i)], d = t.dataset.dock.slice(i + 1);
@@ -420,10 +450,11 @@ function bind() {
   $('#btnAddShift').addEventListener('click', () => { readRules(); draft.groups.push({ type: 'shift', docks: [], shift: -30 }); drawRules(); });
   $('#btnSaveRules').addEventListener('click', async () => {
     readRules();
-    const bad = draft.groups.some((g) => !g.docks.length || (g.type === 'shift' ? !SHIFT_STEPS.includes(g.shift)
+    const bad = draft.groups.some((g) => !g.docks.length || (g.type === 'shift' ? !Number.isInteger(g.shift) || !g.shift
       : g.map.some((m) => !/^\d{2}:\d{2}$/.test(m.orig) || !/^\d{2}:\d{2}$/.test(m.slide))));
     if (bad) { $('#rulesErr').textContent = 'กรุณาใส่ Dock และเวลาให้ครบทุกแถว'; return; }
     draft.groups = draft.groups.filter((g) => g.type === 'shift' || g.map.length);
+    draft.groups.forEach((g) => delete g.dir);
     draft.keepDays = Math.max(1, Math.min(60, Number($('#keepDays').value) || 7));
     try { await store.saveRules(draft); $('#dlgRules').close(); toast('บันทึกกฎแล้ว'); await reload(); }
     catch (err) { $('#rulesErr').textContent = 'บันทึกไม่สำเร็จ: ' + err.message; }

@@ -33,15 +33,10 @@
         <div class="src-meta">ยังไม่มีข้อมูล</div>
         <label class="btn admin-only">อัปเดต DataSlide<input type="file" accept=".xlsx,.xls,.csv" data-kind="slide" hidden></label>
       </div>
-      <div class="src" id="srcWH1">
-        <div class="src-h"><span class="dot"></span>WMS WH1</div>
+      <div class="src" id="srcWMS">
+        <div class="src-h"><span class="dot"></span>WMS (WH1 + WH4)</div>
         <div class="src-meta">ยังไม่มีข้อมูล</div>
-        <label class="btn admin-only">อัปเดตไฟล์ WH1<input type="file" accept=".xlsx,.xls,.csv" data-kind="WH1" hidden></label>
-      </div>
-      <div class="src" id="srcWH4">
-        <div class="src-h"><span class="dot"></span>WMS WH4</div>
-        <div class="src-meta">ยังไม่มีข้อมูล</div>
-        <label class="btn admin-only">อัปเดตไฟล์ WH4<input type="file" accept=".xlsx,.xls,.csv" data-kind="WH4" hidden></label>
+        <label class="btn admin-only">อัปเดตไฟล์ WMS<input type="file" accept=".xlsx,.xls,.csv" data-kind="wms" hidden></label>
       </div>
       <div class="src rules-src">
         <div class="src-h">กฎ Slide Due ตาม Dock</div>
@@ -56,8 +51,8 @@
         <label>เวลาเริ่ม<input type="datetime-local" id="fStart"></label>
         <label>เวลาจบ<input type="datetime-local" id="fEnd"></label>
         <div class="quick">
-          <button class="chip" data-q="day">กะเช้า 07:30–19:30</button>
-          <button class="chip" data-q="night">กะดึก 19:30–07:30</button>
+          <button class="chip" data-q="day">กะเช้า 07:30–19:59</button>
+          <button class="chip" data-q="night">กะดึก 20:00–07:29</button>
           <button class="chip" data-q="today">วันนี้ทั้งวัน</button>
         </div>
       </div>
@@ -112,7 +107,7 @@
     <div>
       <h3>กฎ Slide Due แยกตาม Dock</h3>
       <p class="hint">ใช้เฉพาะรายการที่ <b>ไม่มีใน DataSlide</b> — ถ้า Dock ตรงกลุ่ม และเวลา Due ใน WMS ตรงกับ Original Due จะเลื่อนเป็นเวลา Slide Due ของวันเดียวกัน (ถ้าเวลาข้ามเที่ยงคืนจะเป็นวันถัดไป)</p>
-      <p class="hint"><b>เลื่อนเร็ว/ช้า</b> — เลือก Dock แล้วเลือกเลื่อน Due ใน WMS เร็วขึ้นหรือช้าลงทีละ 30 นาที (ใช้กับทุกเวลา) · ถ้า Dock ตรงกับกฎ “เปลี่ยนเวลา” ด้วย จะใช้กฎเปลี่ยนเวลาก่อน</p>
+      <p class="hint"><b>เลื่อนเร็ว/ช้า</b> — เลือก Dock แล้วกดเลือก เร็วขึ้น / ช้าลง และใส่จำนวนชั่วโมง นาที (ใช้กับทุกเวลา Due ใน WMS) · ถ้า Dock ตรงกับกฎ “เปลี่ยนเวลา” ด้วย จะใช้กฎเปลี่ยนเวลาก่อน</p>
       <div id="rulesBody"></div>
       <div class="rules-tools admin-only">
         <button type="button" class="btn ghost" id="btnAddGroup">+ เพิ่มกลุ่ม เปลี่ยนเวลา</button>
