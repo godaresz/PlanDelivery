@@ -62,7 +62,7 @@ function setRange(kind) {
     return setRange(mins >= 450 && mins < 1200 ? 'day' : 'night');
   }
   $('#fStart').value = toInput(s); $('#fEnd').value = toInput(e);
-  $$('.quick .chip').forEach((c) => c.classList.toggle('on', c.dataset.q === kind));
+  $$('.quick .chip[data-q]').forEach((c) => c.classList.toggle('on', c.dataset.q === kind));
   saveFilters(); render();
 }
 function saveFilters() {
@@ -82,6 +82,14 @@ function loadFilters() {
     }
   } catch { /* ignore */ }
   return false;
+}
+
+// ---------- date inputs shown as DD/MM/YYYY (native pickers follow the browser locale) ----------
+function syncDates() {
+  $$('.dt-wrap input').forEach((i) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/.exec(i.value);
+    i.previousElementSibling.textContent = m ? `${m[3]}/${m[2]}/${m[1]}${m[4] ? ` ${m[4]}:${m[5]}` : ''}` : 'เลือกวันที่';
+  });
 }
 
 // ---------- ship-date mode ----------
@@ -192,6 +200,7 @@ function tripsInView(whs, viewRows) {
 }
 
 function render() {
+  syncDates();
   if (!S.data) return;
   const all = currentRows();
   const scope = S.wh === 'ALL' ? WHS : [S.wh];
@@ -603,7 +612,11 @@ function readRules() {
 // ---------- wiring ----------
 function bind() {
   $$('input[type=file]').forEach((i) => i.addEventListener('change', onUpload));
-  $$('.quick .chip').forEach((c) => c.addEventListener('click', () => setRange(c.dataset.q)));
+  $$('.quick .chip[data-q]').forEach((c) => c.addEventListener('click', () => setRange(c.dataset.q)));
+  $$('.dt-wrap input').forEach((i) => {
+    i.addEventListener('click', () => { try { i.showPicker(); } catch { /* older browsers: native behaviour */ } });
+    i.addEventListener('input', syncDates);
+  });
   $$('#modeTabs .tab').forEach((t) => t.addEventListener('click', () => setMode(t.dataset.mode)));
   $('#fSnDate').addEventListener('change', (e) => { S.snDate = e.target.value; saveFilters(); render(); });
   $$('#snShift .chip').forEach((c) => c.addEventListener('click', () => { S.snShift = c.dataset.sh; drawMode(); saveFilters(); render(); }));
@@ -612,7 +625,7 @@ function bind() {
     S.snDate = ymd(d); drawMode(); saveFilters(); render();
   }));
   ['#fStart', '#fEnd', '#fBacklog'].forEach((s) => $(s).addEventListener('change', () => {
-    $$('.quick .chip').forEach((c) => c.classList.remove('on')); saveFilters(); render();
+    $$('.quick .chip[data-q]').forEach((c) => c.classList.remove('on')); saveFilters(); render();
   }));
   $$('#whTabs .tab').forEach((t) => t.addEventListener('click', () => {
     S.wh = t.dataset.wh; S.win = null; S.limit = 300;
@@ -693,7 +706,7 @@ function tick() {
 async function main() {
   bind();
   if (!loadFilters()) setRange('auto');
-  drawMode();
+  drawMode(); syncDates();
   $$('#whTabs .tab').forEach((x) => x.classList.toggle('active', x.dataset.wh === S.wh));
   $('#modeBadge').textContent = store.isDemo ? 'โหมดทดลอง (เก็บในเครื่องนี้)' : 'Firebase';
   $('#modeBadge').classList.toggle('demo', store.isDemo);

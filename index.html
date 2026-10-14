@@ -46,7 +46,7 @@
         </div>
       </div>
       <div class="f-group" id="fgSn" hidden>
-        <label>วันที่ส่ง<input type="date" id="fSnDate"></label>
+        <label>วันที่ส่ง<span class="dt-wrap"><span class="dt-show"></span><input type="date" id="fSnDate"></span></label>
         <div class="quick" id="snShift">
           <button class="chip" data-sh="ALL">ทั้งวัน (D + N)</button>
           <button class="chip" data-sh="D">กะเช้า (D)</button>
@@ -59,8 +59,8 @@
         <span class="hint">แสดงเฉพาะรายการที่มี Shipping No. ของวัน/กะนี้ (ไม่ดู Due)</span>
       </div>
       <div class="f-group" id="fgDue">
-        <label>เวลาเริ่ม<input type="datetime-local" id="fStart"></label>
-        <label>เวลาจบ<input type="datetime-local" id="fEnd"></label>
+        <label>เวลาเริ่ม<span class="dt-wrap"><span class="dt-show"></span><input type="datetime-local" id="fStart"></span></label>
+        <label>เวลาจบ<span class="dt-wrap"><span class="dt-show"></span><input type="datetime-local" id="fEnd"></span></label>
         <div class="quick">
           <button class="chip" data-q="day">กะเช้า 07:30–19:59</button>
           <button class="chip" data-q="night">กะดึก 20:00–07:29</button>
