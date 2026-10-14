@@ -138,6 +138,110 @@ function ensureArchive(start, end) {
   return days;
 }
 
+// ---------- quarterly export + delete (keeps the current and previous quarter in Firebase) ----------
+const quarterOf = (day) => `${day.slice(0, 4)}-Q${Math.floor((+day.slice(5, 7) - 1) / 3) + 1}`;
+const prevQuarter = (q) => { const y = +q.slice(0, 4), n = +q.slice(6); return n > 1 ? `${y}-Q${n - 1}` : `${y - 1}-Q4`; };
+function quarterRange(q) {
+  const y = +q.slice(0, 4), n = +q.slice(6);
+  return [new Date(y, (n - 1) * 3, 1), new Date(y, n * 3, 0)];
+}
+function quarters() {
+  const idx = (S.data && S.data.archIndex) || {};
+  const m = new Map();
+  const get = (q) => { if (!m.has(q)) m.set(q, { q, WH1: 0, WH4: 0, days: [], ilms: 0 }); return m.get(q); };
+  for (const wh of WHS) for (const [day, n] of Object.entries(idx[wh] || {})) { const x = get(quarterOf(day)); x[wh] += n; x.days.push([wh, day]); }
+  for (const r of S.ilmsMap.values()) if (r.dt) get(quarterOf(ymd(r.dt))).ilms++;
+  const keepFrom = prevQuarter(quarterOf(ymd(new Date())));
+  // a quarter counts as exported only if the file held exactly what is stored now (new rows after export = export again)
+  const sig = (x) => `${x.WH1}|${x.WH4}|${x.ilms}`;
+  return [...m.values()].sort((a, b) => a.q.localeCompare(b.q)).map((x) => {
+    const e = (idx.exported || {})[x.q];
+    const ok = e && typeof e === 'object' && e.sig === sig(x);
+    return { ...x, sig: sig(x), due: x.q < keepFrom, exported: ok ? e.at : null, file: ok ? e.file : '', stale: !!e && !ok };
+  });
+}
+async function exportQuarter(q) {
+  const x = quarters().find((y) => y.q === q);
+  if (!x) return;
+  toast(`กำลังเตรียมไฟล์ไตรมาส ${q}…`, false, 120000);
+  const wb = XLSX.utils.book_new();
+  const now = new Date();
+  for (const wh of WHS) {
+    const days = x.days.filter(([w]) => w === wh).map(([, d]) => d).sort();
+    let rows = [];
+    for (const d of days) rows = rows.concat(await store.loadArchiveDay(wh, d));
+    const data = evaluate(rows, S.slideMap, S.rules.groups || [], now).map((r) => ({
+      'Order No.': r.o, Supplier: r.s, 'Part No.': r.p, 'Part Name': r.n, Dock: r.d, 'Window Name': r.w, 'Pallet No.': r.pl,
+      Type: r.rk ? 'Rack' : 'Pallet', Quantity: r.q, 'Recept Box Count': r.bx, 'Due (WMS)': fmtShowFull(r.wmsDue),
+      'Due used': fmtShowFull(r.due), 'Due source': r.src, 'StockIn Time': fmtShowFull(fromKey(r.si)), 'Shipping Time': fmtShowFull(r.shipT),
+      'Shipping No.': r.sn || '', 'Truck License': r.tr, 'Shipping Confirm': r.cf ? 'CONFIRMED' : '', 'Late (min)': r.lateMin, Key: r.k,
+    }));
+    for (let i = 0; i < Math.max(1, data.length); i += 1000000) { // Excel sheet limit
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data.slice(i, i + 1000000)), i ? `${wh}_${i / 1000000 + 1}` : wh);
+    }
+  }
+  const il = [...S.ilmsMap.values()].filter((r) => r.dt && quarterOf(ymd(r.dt)) === q)
+    .map((r) => ({ 'Truckplan No': r.tp, 'Delivery Date': fmtShowFull(r.dt), 'Truck License': r.tr, Milestone: r.ms, 'Location From': r.from }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(il), 'ILMS');
+  const fname = `ShippingCheck_Archive_${q}_${ymd(now).replace(/-/g, '')}-${pad(now.getHours())}${pad(now.getMinutes())}.xlsx`;
+  XLSX.writeFile(wb, fname);
+  const index = S.data.archIndex;
+  index.exported = { ...(index.exported || {}), [q]: { at: new Date().toISOString(), sig: x.sig, file: fname } };
+  await store.saveArchIndex(index);
+  toast(`Export ไตรมาส ${q} แล้ว: WH1 ${x.WH1.toLocaleString()} · WH4 ${x.WH4.toLocaleString()} แถว · ILMS ${il.length} คัน — ตรวจไฟล์แล้วกดยืนยันลบ`, false, 10000);
+  renderArchive();
+}
+async function deleteQuarter(q) {
+  const x = quarters().find((y) => y.q === q);
+  if (!x || !x.due || !x.exported) return;
+  if (!confirm(`ลบข้อมูลไตรมาส ${q} ออกจาก Firebase?\nWH1 ${x.WH1.toLocaleString()} แถว · WH4 ${x.WH4.toLocaleString()} แถว · ILMS ${x.ilms} คัน\n`
+    + `(export ไว้แล้วเมื่อ ${fmtShowFull(new Date(x.exported))} — ไฟล์ ${x.file})\nลบแล้วกู้คืนจาก Firebase ไม่ได้`)) return;
+  toast(`กำลังลบไตรมาส ${q}…`, false, 120000);
+  await store.deleteArchiveDays(x.days, S.data.archIndex);
+  const keepIlms = (S.data.ilms.data || []).filter((r) => !r.dt || quarterOf(r.dt.slice(0, 10)) !== q);
+  if (keepIlms.length !== (S.data.ilms.data || []).length) {
+    await store.saveIlms(keepIlms, { ...(S.data.ilms.meta || {}), count: keepIlms.length });
+  }
+  S.arch.clear();
+  toast(`ลบไตรมาส ${q} ออกจาก Firebase แล้ว`);
+  await reload();
+}
+function renderArchive() {
+  if (!S.data) return;
+  const qs = quarters();
+  const admin = !!S.user;
+  $('#tblArch').innerHTML = `<thead><tr><th>ไตรมาส</th><th>ช่วงวันที่</th><th class="n">WH1 (แถว)</th><th class="n">WH4 (แถว)</th>
+    <th class="n">ILMS (คัน)</th><th>สถานะ</th><th></th></tr></thead><tbody>${qs.map((x) => {
+    const [a, b] = quarterRange(x.q);
+    const st = !x.due ? '<span class="pill done_on">เก็บใน Firebase</span>'
+      : x.exported ? `<span class="pill done_late">export แล้ว ${fmtShow(new Date(x.exported))} · รอยืนยันลบ</span>`
+        : `<span class="pill overdue">${x.stale ? 'มีข้อมูลเพิ่มหลัง export · ต้อง export ใหม่' : 'ถึงรอบ export'}</span>`;
+    return `<tr><td><b>${x.q}</b></td><td class="t">${dmy(a)} – ${dmy(b)}</td><td class="n">${x.WH1.toLocaleString()}</td>
+      <td class="n">${x.WH4.toLocaleString()}</td><td class="n">${x.ilms}</td><td>${st}</td>
+      <td>${admin ? `<button class="btn ghost sm" data-exp="${x.q}">Export</button>` : ''}
+        ${admin && x.due && x.exported ? `<button class="btn danger sm" data-del="${x.q}">ลบออกจาก Firebase</button>` : ''}</td></tr>`;
+  }).join('') || '<tr><td colspan="7" class="hint">ยังไม่มีข้อมูลในประวัติ</td></tr>'}</tbody>`;
+  $$('#tblArch [data-exp]').forEach((b) => b.addEventListener('click', () => exportQuarter(b.dataset.exp).catch((e) => toast('Export ไม่สำเร็จ: ' + e.message, true))));
+  $$('#tblArch [data-del]').forEach((b) => b.addEventListener('click', () => deleteQuarter(b.dataset.del).catch((e) => toast('ลบไม่สำเร็จ: ' + e.message, true))));
+  const due = qs.filter((x) => x.due);
+  const banner = $('#archBanner');
+  banner.hidden = !admin || !due.length;
+  if (!banner.hidden) {
+    banner.innerHTML = `<b>ถึงรอบล้างข้อมูลเก่า:</b> ไตรมาส ${due.map((x) => x.q).join(', ')}
+      ${due.every((x) => x.exported) ? '— export แล้ว ตรวจไฟล์แล้วกดยืนยันลบ' : '— กำลัง export เป็น Excel อัตโนมัติ'}
+      <a href="#data" class="btn ghost sm">ไปที่หน้าข้อมูล</a>`;
+  }
+}
+// auto: when a signed-in user opens the app and a quarter is due but not exported yet, export it (once per visit)
+async function autoExport() {
+  if (!S.data || !S.user) return;
+  S.autoTried = S.autoTried || new Set(); // each quarter is tried once per visit
+  for (const x of quarters().filter((y) => y.due && !y.exported && !S.autoTried.has(`${y.q}|${y.sig}`))) {
+    S.autoTried.add(`${x.q}|${x.sig}`);
+    try { await exportQuarter(x.q); } catch (e) { toast('Export อัตโนมัติไม่สำเร็จ: ' + e.message, true, 9000); }
+  }
+}
+
 // ---------- data ----------
 async function reload() {
   try {
@@ -149,6 +253,8 @@ async function reload() {
     S.ilmsMap = new Map((S.data.ilms.data || []).map((r) => [r.tp, { ...r, dt: fromKey(r.dt) }]));
     renderSources();
     render();
+    renderArchive();
+    autoExport();
   } catch (e) {
     console.error(e);
     toast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, true, 8000);
@@ -766,6 +872,8 @@ async function main() {
     document.body.classList.toggle('is-admin', !!u);
     $('#btnLogin').textContent = store.isDemo ? 'โหมดทดลอง' : u ? `ออกจากระบบ (${u.email})` : 'เข้าสู่ระบบ';
     $('#btnLogin').disabled = store.isDemo;
+    renderArchive();
+    autoExport();
   });
   let rt;
   store.onChange(() => { clearTimeout(rt); rt = setTimeout(reload, 400); });

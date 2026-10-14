@@ -34,6 +34,7 @@
   </nav>
 
   <main>
+    <div id="archBanner" class="banner admin-only" hidden></div>
     <!-- filters (shared by the report pages) -->
     <section class="panel filters" id="filterBar">
       <div class="f-group">
@@ -163,6 +164,12 @@
           <label class="btn primary admin-only">อัปเดตไฟล์ ILMS<input type="file" accept=".xlsx,.xls,.csv" data-kind="ilms" hidden></label>
           <p class="hint">เทียบ Truckplan No กับ Shipping No. ของ WMS · Delivery Date = เวลารถออกจริง · รวมกับข้อมูลเดิม ไม่ลบ</p>
         </div>
+      </section>
+      <section class="panel" id="archPanel">
+        <div class="panel-h"><h2>ส่งออกและล้างข้อมูลเก่า (ทุก 3 เดือน)</h2></div>
+        <p class="hint">Firebase เก็บไตรมาสปัจจุบัน + ไตรมาสก่อนหน้า (3–6 เดือน) · เมื่อขึ้นไตรมาสใหม่ ไตรมาสที่เก่ากว่าจะถูก export เป็นไฟล์ Excel
+          ให้อัตโนมัติเมื่อผู้ดูแล (login) เปิดเว็บ แล้วกดยืนยันเพื่อลบออกจาก Firebase · ลบได้เฉพาะไตรมาสที่ export แล้ว</p>
+        <div class="table-wrap"><table id="tblArch" class="tbl"></table></div>
       </section>
       <section class="panel">
         <div class="panel-h"><h2>กฎ Slide Due ตาม Dock</h2><button id="btnRules" class="btn ghost">ดู / แก้ไขกฎ</button></div>

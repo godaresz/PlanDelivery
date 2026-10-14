@@ -73,7 +73,7 @@ async function saveChunked(prefix, payload, meta) {
   if (!parts.length) parts.push('');
   const old = await getDoc(prefix + '_meta');
   const oldN = old ? old.chunks || 0 : 0;
-  const version = Date.now();
+  const version = Date.now() * 1000 + Math.floor(Math.random() * 1000); // unique even for saves in the same ms
   const sets = parts.map((p, i) => [`${prefix}_c${i}`, { v: version, data: p }]);
   sets.push([prefix + '_meta', { ...meta, chunks: parts.length, version, updatedAt: new Date().toISOString() }]);
   const deletes = [];
@@ -128,5 +128,19 @@ export async function appendArchive(wh, byDay, index) {
     index[wh][day] = all.length;
   }
   await writeDocs([['arch_index', { ...index, updatedAt: new Date().toISOString() }]], []);
+}
+export const saveArchIndex = (index) => writeDocs([['arch_index', { ...index, updatedAt: new Date().toISOString() }]], []);
+// remove archive days (after they were exported); list = [[wh, 'YYYY-MM-DD'], ...]
+export async function deleteArchiveDays(list, index) {
+  for (const [wh, day] of list) {
+    const id = archId(wh, day);
+    const meta = await getDoc(id + '_meta');
+    const ids = [id + '_meta'];
+    for (let i = 0; i < ((meta && meta.chunks) || 0); i++) ids.push(`${id}_c${i}`);
+    await writeDocs([], ids);
+    delete cache[id];
+    if (index[wh]) delete index[wh][day];
+  }
+  await saveArchIndex(index);
 }
 export const saveRules = (rules) => writeDocs([['rules', { ...rules, updatedAt: new Date().toISOString() }]], []);

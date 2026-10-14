@@ -47,7 +47,11 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    - Other rows are replaced by the new file, but a shipped row is never downgraded to open.
    - Shipped rows missing from the new file are kept; open rows missing from it are dropped (no longer in WMS).
    - Shipped rows whose ship day is older than `keepDays` (default 7) move to the archive (not deleted).
-   ILMS uploads merge by Truckplan No and are never deleted.
+   ILMS uploads merge by Truckplan No (not deleted by uploads).
+   **Quarterly export + delete:** Firebase keeps the current + previous calendar quarter. Older quarters are exported
+   to Excel automatically when a signed-in user opens the app (sheets WH1, WH4, ILMS), then deleted only after the
+   user confirms. A quarter counts as exported only if row counts still match the export (`arch_index.exported[q].sig`);
+   new rows after an export require a new export. No server: there is no background scheduler.
 7. View filter: start/end datetime, end minute inclusive (shift buttons day 07:30–19:59 / night 20:00–07:29) + optional backlog of open rows due before start.
    Second mode "วันที่ส่ง (Shipping No.)": pick a ship date + shift (ALL / D / N); shows only rows and trucks whose
    Shipping No. date/shift match (due is ignored; rows without a Shipping No. are hidden).
