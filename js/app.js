@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, ST } from './logic.js';
+import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -23,6 +23,7 @@ function shiftLabel(min) {
 }
 
 const S = {
+  arch: new Map(), archLoading: new Set(), // archive cache: "WH|YYYY-MM-DD" -> rows
   data: null, rules: DEFAULT_RULES, slideMap: new Map(), ilmsMap: new Map(), user: null,
   mode: 'due', snDate: '', snShift: 'ALL', // mode 'sn' = pick by ship date / shift from the Shipping No.
   wh: 'ALL', status: 'ALL', truckSt: 'ALL', win: null, search: '', limit: 300, lastRows: [], page: 'overview',
@@ -111,6 +112,32 @@ function setMode(mode) {
   drawMode(); saveFilters(); render();
 }
 
+// ---------- archive (shipped rows older than keepDays, by day; loaded only for the days being viewed) ----------
+function ensureArchive(start, end) {
+  const idx = (S.data && S.data.archIndex) || {};
+  let from, to;
+  if (S.mode === 'sn') { if (!S.snDate) return []; from = new Date(S.snDate + 'T00:00'); to = from; }
+  else { if (!start || !end) return []; from = start; to = end; }
+  const want = [];
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() - 1); // a day either side: early / late shipping
+  const last = new Date(to.getFullYear(), to.getMonth(), to.getDate() + 1);
+  for (; d <= last && want.length < 62; d.setDate(d.getDate() + 1)) want.push(ymd(d));
+  const days = want.filter((x) => WHS.some((wh) => idx[wh] && idx[wh][x]));
+  const missing = [];
+  for (const x of days) for (const wh of WHS) {
+    const key = `${wh}|${x}`;
+    if (idx[wh] && idx[wh][x] && !S.arch.has(key) && !S.archLoading.has(key)) missing.push([wh, x, key]);
+  }
+  if (missing.length) {
+    missing.forEach(([, , key]) => S.archLoading.add(key));
+    toast(`กำลังโหลดประวัติ ${days.length} วัน…`, false, 30000);
+    Promise.all(missing.map(([wh, x, key]) => store.loadArchiveDay(wh, x).then((rows) => S.arch.set(key, rows))))
+      .then(() => { missing.forEach(([, , key]) => S.archLoading.delete(key)); $('#toast').hidden = true; render(); })
+      .catch((e) => { missing.forEach(([, , key]) => S.archLoading.delete(key)); toast('โหลดประวัติไม่สำเร็จ: ' + e.message, true); });
+  }
+  return days;
+}
+
 // ---------- data ----------
 async function reload() {
   try {
@@ -141,6 +168,11 @@ function renderSources() {
       + (mt.kept ? ` (เก็บที่ส่งแล้วจากรอบก่อน ${mt.kept})` : '') : 'ยังไม่มีข้อมูล');
   }).join('<br>');
   $('#srcWMS').classList.toggle('ok', WHS.some((wh) => !!S.data[wh].meta));
+  const ai = S.data.archIndex || {};
+  const arch = WHS.map((wh) => { const ds = Object.keys(ai[wh] || {}).sort(); const n = ds.reduce((a, d) => a + ai[wh][d], 0);
+    return ds.length ? `<b>${wh}</b> ${ds.length} วัน · ${n.toLocaleString()} แถว (${dmy(new Date(ds[0] + 'T00:00'))} – ${dmy(new Date(ds[ds.length - 1] + 'T00:00'))})` : ''; })
+    .filter(Boolean);
+  $('#srcWMS .src-meta').innerHTML += `<div class="arch-meta">ประวัติที่ส่งแล้ว (ไม่ลบ): ${arch.length ? arch.join(' · ') : 'ยังไม่มี'}</div>`;
   const im = S.data.ilms.meta;
   const sns = new Set(WHS.flatMap((wh) => (S.data[wh].data || []).map((r) => r.sn).filter(Boolean)));
   const matched = [...S.ilmsMap.keys()].filter((tp) => sns.has(tp)).length;
@@ -161,8 +193,11 @@ function currentRows() {
   const backlog = $('#fBacklog').checked;
   const q = S.search.trim().toLowerCase();
   const out = {}, full = {};
+  const days = ensureArchive(start, end);
   for (const wh of WHS) {
-    const rows = (S.data && S.data[wh].data) || [];
+    const active = (S.data && S.data[wh].data) || [];
+    const have = new Set(active.map((r) => r.k));
+    const rows = active.concat(days.flatMap((d) => (S.arch.get(`${wh}|${d}`) || []).filter((r) => !have.has(r.k))));
     let ev = evaluate(rows, S.slideMap, S.rules.groups || [], now).map((r) => ({ ...r, wh }));
     full[wh] = ev;
     const snCache = new Map(); // parse each Shipping No. once
@@ -506,8 +541,7 @@ async function onUpload(e) {
       const res = await parseIlmsFile(file);
       if (!res.rows.length) throw new Error('ไม่พบ Truckplan No ของ WH1 / WH4 ในไฟล์');
       const latest = await store.loadAll();
-      const keepDays = Number(S.rules.keepDays) || 7;
-      const m = mergeIlms((latest.ilms && latest.ilms.data) || [], res.rows, keepDays, new Date());
+      const m = mergeIlms((latest.ilms && latest.ilms.data) || [], res.rows);
       await store.saveIlms(m.rows, { fileName: file.name, count: m.rows.length, fromFile: res.rows.length });
       toast(`อัปเดต ILMS แล้ว: ${res.rows.length.toLocaleString()} คันจากไฟล์ (WH1/WH4)` + (res.other ? ` · ข้ามคลังอื่น ${res.other}` : '')
         + ` · รวมเก็บไว้ ${m.rows.length.toLocaleString()} คัน`, false, 8000);
@@ -534,12 +568,24 @@ async function onUpload(e) {
       const latest = await store.loadAll();
       const keepDays = Number(S.rules.keepDays) || 7;
       const msgs = [];
+      const index = latest.archIndex || { WH1: {}, WH4: {} };
       for (const wh of found) { // a warehouse missing from the file keeps its old data
         const oldRows = (latest[wh] && latest[wh].data) || [];
-        const m = mergeWms(oldRows, split[wh], keepDays, new Date());
-        await store.saveWms(wh, m.rows, { fileName: file.name, count: m.rows.length, fromFile: split[wh].length, kept: m.kept });
-        msgs.push(`${wh} ${split[wh].length.toLocaleString()} แถว` + (m.kept ? ` + เก็บที่ส่งแล้ว ${m.kept}` : '')
-          + (m.dropped ? ` (ลบที่ส่งแล้วเกิน ${keepDays} วัน ${m.dropped})` : ''));
+        // rows of this file that may already be archived: load those archive days to lock their keys
+        const days = [...new Set(split[wh].map(archDay))].filter((d) => index[wh] && index[wh][d]);
+        const archivedKeys = new Set();
+        for (const d of days) (await store.loadArchiveDay(wh, d)).forEach((r) => archivedKeys.add(r.k));
+        const m = mergeWms(oldRows, split[wh], keepDays, new Date(), archivedKeys);
+        if (m.toArchive.length) { // archive first: if the next write fails, the rows still exist in one place
+          const byDay = new Map();
+          for (const r of m.toArchive) { const d = archDay(r); if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push(r); }
+          await store.appendArchive(wh, byDay, index);
+          S.arch.clear();
+        }
+        await store.saveWms(wh, m.rows, { fileName: file.name, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped });
+        msgs.push(`${wh} ${split[wh].length.toLocaleString()} แถว` + (m.skipped ? ` · ข้ามที่ Confirm แล้ว ${m.skipped.toLocaleString()}` : '')
+          + (m.kept ? ` · เก็บที่ส่งแล้วจากรอบก่อน ${m.kept.toLocaleString()}` : '')
+          + (m.toArchive.length ? ` · ย้ายเข้าประวัติ ${m.toArchive.length.toLocaleString()}` : ''));
       }
       const miss = WHS.filter((wh) => !split[wh].length);
       toast(`อัปเดต WMS แล้ว: ${msgs.join(' · ')}` + (miss.length ? ` · ไม่มีข้อมูล ${miss.join(', ')} ในไฟล์ (คงข้อมูลเดิม)` : '')

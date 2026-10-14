@@ -155,13 +155,13 @@
           <div class="src-h"><span class="dot"></span>WMS<span class="src-sub">WH1 + WH4 ไฟล์เดียว</span></div>
           <div class="src-meta">ยังไม่มีข้อมูล</div>
           <label class="btn primary admin-only">อัปเดตไฟล์ WMS<input type="file" accept=".xlsx,.xls,.csv" data-kind="wms" hidden></label>
-          <p class="hint">แยก WH จาก Window Name (1… / 4…) · เก็บรายการที่ส่งแล้วจากรอบก่อน</p>
+          <p class="hint">แยก WH จาก Window Name (1… / 4…) · รายการที่ Confirm Shipping แล้วจะถูกล็อก ไฟล์ใหม่แก้ไม่ได้ · ไม่ลบข้อมูลที่ส่งแล้ว</p>
         </div>
         <div class="src" id="srcILMS">
           <div class="src-h"><span class="dot"></span>ILMS<span class="src-sub">Truck Inquiry — เวลารถออกจริง</span></div>
           <div class="src-meta">ยังไม่มีข้อมูล</div>
           <label class="btn primary admin-only">อัปเดตไฟล์ ILMS<input type="file" accept=".xlsx,.xls,.csv" data-kind="ilms" hidden></label>
-          <p class="hint">เทียบ Truckplan No กับ Shipping No. ของ WMS · Delivery Date = เวลารถออกจริง · รวมกับข้อมูลเดิม</p>
+          <p class="hint">เทียบ Truckplan No กับ Shipping No. ของ WMS · Delivery Date = เวลารถออกจริง · รวมกับข้อมูลเดิม ไม่ลบ</p>
         </div>
       </section>
       <section class="panel">
@@ -195,7 +195,7 @@
       <div class="rules-tools admin-only">
         <button type="button" class="btn ghost" id="btnAddGroup">+ เพิ่มกลุ่ม เปลี่ยนเวลา</button>
         <button type="button" class="btn ghost" id="btnAddShift">+ เพิ่มกลุ่ม เลื่อนเร็ว/ช้า</button>
-        <label class="inline">เก็บรายการที่ส่งแล้วไว้ <input type="number" id="keepDays" min="1" max="60" value="7"> วัน</label>
+        <label class="inline">ย้ายรายการที่ส่งแล้วเข้าประวัติหลัง <input type="number" id="keepDays" min="1" max="60" value="7"> วัน (ไม่ลบ)</label>
       </div>
       <div class="err" id="rulesErr"></div>
       <div class="dlg-actions">

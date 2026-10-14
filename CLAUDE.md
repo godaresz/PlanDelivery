@@ -16,7 +16,9 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 - `js/parse.js` — file parsing, date/time helpers. Dates are stored as local `"YYYY-MM-DD HH:mm"` strings.
 - `js/logic.js` — effective due, status, window summary, WMS merge.
 - `js/store.js` — Firestore / localStorage. All data lives in collection `shipcheck`:
-  `slide_meta` + `slide_c0..n`, `WH1_meta` + `WH1_c*`, `WH4_meta` + `WH4_c*`, `ilms_meta` + `ilms_c*`, `rules`.
+  `slide_meta` + `slide_c0..n`, `WH1_meta` + `WH1_c*`, `WH4_meta` + `WH4_c*`, `ilms_meta` + `ilms_c*`, `rules`,
+  archive `arch_<WH>_<YYYYMMDD>_meta` + `_c*` (shipped rows by ship day, never deleted) + `arch_index`.
+  Viewers load the archive only for the days being viewed (±1 day).
   Payloads are JSON split into ≤700k-char chunk docs so a page load is ~10 reads. Viewers watch only the meta docs.
 - `js/app.js` — UI (Thai labels), uploads, filters, rules dialog, Excel export.
   Pages via URL hash: `#overview`, `#window`, `#trucks`, `#detail`, `#data` (uploads + rules). Filter bar is shared.
@@ -39,9 +41,13 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 5. **Pallet / Rack** = distinct `Pallet No.`; RFID No. all zeros → Rack, otherwise Pallet. Boxes = sum of `Recept Box Count`.
 6. **Uploads**: DataSlide upload replaces all old slide data. WMS is ONE file for both warehouses, split by
    Window Name (`1…` → WH1, `4…` → WH4, other rows skipped with a warning); a warehouse with no rows in the file
-   keeps its old data. Per warehouse, the upload replaces open rows but KEEPS completed rows
-   from earlier uploads (shown as shipped) and never downgrades a completed row; completed rows older than
-   `keepDays` (default 7, set in rules dialog) are dropped.
+   keeps its old data. **Nothing shipped is ever deleted.** Row identity = `Order|Part|Pallet|Recept Output No.`
+   (an order can have several Shipping No.; duplicate keys are handled as a group).
+   - Rows with Shipping Confirm `CONFIRMED`, and anything already archived, are LOCKED: a new file never changes them.
+   - Other rows are replaced by the new file, but a shipped row is never downgraded to open.
+   - Shipped rows missing from the new file are kept; open rows missing from it are dropped (no longer in WMS).
+   - Shipped rows whose ship day is older than `keepDays` (default 7) move to the archive (not deleted).
+   ILMS uploads merge by Truckplan No and are never deleted.
 7. View filter: start/end datetime, end minute inclusive (shift buttons day 07:30–19:59 / night 20:00–07:29) + optional backlog of open rows due before start.
    Second mode "วันที่ส่ง (Shipping No.)": pick a ship date + shift (ALL / D / N); shows only rows and trucks whose
    Shipping No. date/shift match (due is ignored; rows without a Shipping No. are hidden).
@@ -53,7 +59,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Window table's truck column counts only these trucks (rows on other-shift trucks still count as pallets); the truck
    page notes other-shift trucks carrying rows due in range and in-shift trucks carrying only rows due outside it.
 10. **ILMS** (Truck Inquiry export): `Truckplan No` = WMS Shipping No.; `Delivery Date` = actual departure. Only WH1/WH4
-   numbers kept; uploads merge by Truckplan No (newer wins), dropped after `keepDays`.
+   numbers kept; uploads merge by Truckplan No (newer wins), never deleted.
    Departure = ILMS Delivery Date if matched, else WMS (left once any row shipped). Late (ออกช้า) = departure after
    Due start (ILMS) / a row shipped after its due (WMS fallback). Remaining = not left; overdue = Due start passed.
 

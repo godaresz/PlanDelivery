@@ -22,7 +22,7 @@ export async function init() {
   db = fs.getFirestore(app);
   auth = fa.getAuth(app);
   // live updates: only the small meta documents are watched
-  for (const id of ['slide_meta', 'WH1_meta', 'WH4_meta', 'ilms_meta', 'rules']) {
+  for (const id of ['slide_meta', 'WH1_meta', 'WH4_meta', 'ilms_meta', 'arch_index', 'rules']) {
     fs.onSnapshot(fs.doc(db, COLLECTION, id), () => emit(), () => {});
   }
 }
@@ -101,9 +101,32 @@ export async function loadAll() {
   const [slide, wh1, wh4, ilms, rules] = await Promise.all([
     loadChunked('slide'), loadChunked('WH1'), loadChunked('WH4'), loadChunked('ilms'), getDoc('rules'),
   ]);
-  return { slide, WH1: wh1, WH4: wh4, ilms, rules };
+  const archIndex = await loadArchIndex();
+  return { slide, WH1: wh1, WH4: wh4, ilms, rules, archIndex };
 }
 export const saveSlide = (payload, meta) => saveChunked('slide', payload, meta);
 export const saveWms = (wh, rows, meta) => saveChunked(wh, rows, meta);
 export const saveIlms = (rows, meta) => saveChunked('ilms', rows, meta);
+// ---------- archive: shipped rows by day, written once and never deleted ----------
+// docs arch_<WH>_<YYYYMMDD>_meta + _c*; index doc arch_index = { WH1: { 'YYYY-MM-DD': rowCount }, WH4: {...} }
+const archId = (wh, day) => `arch_${wh}_${day.replace(/-/g, '')}`;
+export const loadArchIndex = async () => (await getDoc('arch_index')) || { WH1: {}, WH4: {} };
+export async function loadArchiveDay(wh, day) {
+  const r = await loadChunked(archId(wh, day));
+  return r.data || [];
+}
+// append rows to archive days (existing archived rows are never replaced)
+export async function appendArchive(wh, byDay, index) {
+  for (const [day, rows] of byDay) {
+    const old = await loadArchiveDay(wh, day);
+    const have = new Set(old.map((r) => r.k));
+    const add = rows.filter((r) => !have.has(r.k));
+    if (!add.length) continue;
+    const all = old.concat(add);
+    await saveChunked(archId(wh, day), all, { wh, day, count: all.length });
+    index[wh] = index[wh] || {};
+    index[wh][day] = all.length;
+  }
+  await writeDocs([['arch_index', { ...index, updatedAt: new Date().toISOString() }]], []);
+}
 export const saveRules = (rules) => writeDocs([['rules', { ...rules, updatedAt: new Date().toISOString() }]], []);

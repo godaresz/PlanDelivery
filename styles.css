@@ -213,3 +213,4 @@ input[type=date] { font: inherit; padding: 6px 8px; border: 1px solid var(--line
 .dt-wrap .dt-show::after { content: '📅'; position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 13px; opacity: .7; }
 .dt-wrap input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 .dt-wrap:focus-within .dt-show { border-color: var(--c-pending); box-shadow: 0 0 0 3px #DBEAFE; }
+.arch-meta { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }

@@ -173,14 +173,12 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
 }
 
 // merge ILMS uploads: newer file wins per Truckplan No; drop trucks older than keepDays
-export function mergeIlms(oldRows, newRows, keepDays, now) {
+// merge ILMS uploads: newer file wins per Truckplan No; nothing is deleted
+export function mergeIlms(oldRows, newRows) {
   const m = new Map(oldRows.map((r) => [r.tp, r]));
   for (const r of newRows) m.set(r.tp, r);
-  const cutoff = new Date(now.getTime() - keepDays * 86400000);
-  const out = [...m.values()].filter((r) => { const d = fromKey(r.dt); return !d || d >= cutoff; });
-  return { rows: out, dropped: m.size - out.length };
+  return { rows: [...m.values()] };
 }
-
 // totals for a list of trucks
 export function tripTotals(list) {
   const left = list.filter((x) => x.left);
@@ -188,24 +186,38 @@ export function tripTotals(list) {
     late: left.filter((x) => x.late).length, od: list.filter((x) => x.od).length };
 }
 
-// merge a new WMS upload with stored rows: keep completed rows that are not in the new file,
-// and never downgrade a completed row back to open.
-export function mergeWms(oldRows, newRows, keepDays, now) {
+// day a row belongs to in the archive: shipping day, else due day ("YYYY-MM-DD")
+export const archDay = (r) => (r.sh || r.dd || '').slice(0, 10);
+
+// Merge a new WMS upload with what is stored. Nothing shipped is ever deleted:
+// - Shipping Confirm CONFIRMED rows (and anything already archived) are LOCKED: a new file can never change them.
+//   Locking is by row key (Order|Part|Pallet|Recept Output No.); duplicate keys are locked as a group.
+// - other rows from the file replace the stored version, but a shipped row is never downgraded to open;
+// - shipped rows missing from the new file are kept; open rows missing from it are dropped (no longer in WMS);
+// - shipped rows whose day is older than keepDays move to the archive (returned in `toArchive`).
+// archivedKeys: keys already in the archive for the days this file touches.
+export function mergeWms(oldRows, newRows, keepDays, now, archivedKeys = new Set()) {
+  const locked = new Set(archivedKeys);
+  for (const o of oldRows) if (o.cf === 1) locked.add(o.k);
   const oldMap = new Map(oldRows.map((r) => [r.k, r]));
   const newKeys = new Set();
   const out = [];
+  let skipped = 0;
   for (const r of newRows) {
     newKeys.add(r.k);
+    if (locked.has(r.k)) { skipped++; continue; }
     const o = oldMap.get(r.k);
     if (o && isComplete(o) && !isComplete(r)) out.push(o); else out.push(r);
   }
-  const cutoff = new Date(now.getTime() - keepDays * 86400000);
-  let kept = 0, dropped = 0;
+  let kept = 0;
   for (const o of oldRows) {
-    if (newKeys.has(o.k) || !isComplete(o)) continue;
-    const ref = fromKey(o.sh) || fromKey(o.dd);
-    if (ref && ref < cutoff) { dropped++; continue; }
+    if (o.cf === 1 && !archivedKeys.has(o.k)) { out.push(o); if (!newKeys.has(o.k)) kept++; continue; }
+    if (archivedKeys.has(o.k) || newKeys.has(o.k) || !isComplete(o)) continue;
     out.push(o); kept++;
   }
-  return { rows: out, kept, dropped };
+  const cutoff = new Date(now.getTime() - keepDays * 86400000);
+  const cutDay = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}-${String(cutoff.getDate()).padStart(2, '0')}`;
+  const active = [], toArchive = [];
+  for (const r of out) (isComplete(r) && archDay(r) && archDay(r) < cutDay ? toArchive : active).push(r);
+  return { rows: active, toArchive, kept, skipped, cutDay };
 }
