@@ -70,7 +70,7 @@ export function byWindow(rows) {
     if (!g.has(key)) {
       g.set(key, { w: key, docks: new Set(), sups: new Set(),
         od: { p: new Set(), r: new Set() }, pe: { p: new Set(), r: new Set() }, dn: { p: new Set(), r: new Set() },
-        scan: new Set(), boxOpen: 0, boxDone: 0, minOpen: null, maxOpen: null, lateDone: 0 });
+        scan: new Set(), trips: new Set(), boxOpen: 0, boxDone: 0, minOpen: null, maxOpen: null, lateDone: 0 });
     }
     const x = g.get(key);
     if (r.d) x.docks.add(r.d);
@@ -79,6 +79,7 @@ export function byWindow(rows) {
     const pal = r.pl || r.k;
     (r.rk ? bucket.r : bucket.p).add(pal);
     if (r.scanned) x.scan.add(pal);
+    if (r.sn) x.trips.add(r.sn);
     if (r.done) {
       x.boxDone += r.bx;
       if (r.st === ST.DONE_LATE) x.lateDone++;
@@ -98,6 +99,33 @@ export function byWindow(rows) {
     if (at !== bt) return at - bt;
     return a.w.localeCompare(b.w);
   });
+}
+
+// group by Shipping No. (one truck trip); rows without a Shipping No. are skipped
+export function byTrip(rows) {
+  const g = new Map();
+  for (const r of rows) {
+    if (!r.sn) continue;
+    if (!g.has(r.sn)) {
+      g.set(r.sn, { sn: r.sn, wh: new Set(), trucks: new Set(), wins: new Set(), docks: new Set(),
+        p: new Set(), r: new Set(), box: 0, rows: 0, done: 0, late: 0, maxLate: 0, first: null, last: null });
+    }
+    const x = g.get(r.sn);
+    if (r.wh) x.wh.add(r.wh);
+    if (r.tr && !isAllZero(r.tr)) x.trucks.add(r.tr);
+    if (r.w) x.wins.add(r.w);
+    if (r.d) x.docks.add(r.d);
+    (r.rk ? x.r : x.p).add(r.pl || r.k);
+    x.box += r.bx; x.rows++;
+    if (r.done) x.done++;
+    if (r.st === ST.DONE_LATE) { x.late++; x.maxLate = Math.max(x.maxLate, r.lateMin || 0); }
+    if (r.shipT) {
+      if (!x.first || r.shipT < x.first) x.first = r.shipT;
+      if (!x.last || r.shipT > x.last) x.last = r.shipT;
+    }
+  }
+  return [...g.values()].sort((a, b) => (a.last ? a.last.getTime() : Infinity) - (b.last ? b.last.getTime() : Infinity)
+    || a.sn.localeCompare(b.sn));
 }
 
 // merge a new WMS upload with stored rows: keep completed rows that are not in the new file,

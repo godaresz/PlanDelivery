@@ -42,6 +42,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    `keepDays` (default 7, set in rules dialog) are dropped.
 7. View filter: start/end datetime, end minute inclusive (shift buttons day 07:30–19:59 / night 20:00–07:29) + optional backlog of open rows due before start.
 8. WH1 Window Names start with `1`, WH4 with `4` (used to split the WMS upload).
+9. **Trips (เที่ยวรถ)** = distinct `Shipping No.` (optional WMS column). A trip counts as left (ออกแล้ว) once any
+   row on it is shipped; otherwise it is scanned-not-closed. Shown as a KPI card, a Window column and the trip table.
 
 ## UI colours (user's standard palette)
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED

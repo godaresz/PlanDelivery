@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, byWindow, mergeWms, ST } from './logic.js';
+import { evaluate, byWindow, byTrip, mergeWms, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -133,7 +133,7 @@ function currentRows() {
       return backlog && !r.done && r.due < start;
     });
     if (q) {
-      ev = ev.filter((r) => [r.o, r.s, r.w, r.pl, r.p, r.d].some((x) => String(x || '').toLowerCase().includes(q)));
+      ev = ev.filter((r) => [r.o, r.s, r.w, r.pl, r.p, r.d, r.sn, r.tr].some((x) => String(x || '').toLowerCase().includes(q)));
     }
     out[wh] = ev;
   }
@@ -147,19 +147,23 @@ function render() {
   renderKpis(all, scope);
   const rows = scope.flatMap((wh) => all[wh]);
   renderWindows(rows);
+  renderTrips(rows);
   renderDetail(rows);
 }
 
 function kpiCalc(rows) {
   const k = { od: { p: new Set(), r: new Set(), b: 0 }, pe: { p: new Set(), r: new Set(), b: 0 },
-    sc: { p: new Set(), b: 0 }, dn: { p: new Set(), r: new Set(), b: 0, late: 0 } };
+    sc: { p: new Set(), b: 0 }, dn: { p: new Set(), r: new Set(), b: 0, late: 0 },
+    trip: { done: new Set(), open: new Set() } };
   for (const r of rows) {
     const pal = r.pl || r.k;
     const t = r.st === ST.OVERDUE ? k.od : r.st === ST.PENDING ? k.pe : k.dn;
     (r.rk ? t.r : t.p).add(pal); t.b += r.bx;
     if (r.st === ST.DONE_LATE) k.dn.late++;
     if (r.scanned) { k.sc.p.add(pal); k.sc.b += r.bx; }
+    if (r.sn) (r.done ? k.trip.done : k.trip.open).add(r.sn);
   }
+  for (const sn of k.trip.done) k.trip.open.delete(sn); // a trip counts as left once any row on it is shipped
   return k;
 }
 
@@ -180,6 +184,8 @@ function renderKpis(all, scope) {
           <div class="det">${k.sc.b.toLocaleString()} กล่อง (นับรวมใน 2 ช่องแรก)</div></div>
         <div class="kpi done"><div class="lbl">ส่งแล้ว</div><div class="val">${tot(k.dn)}</div>
           <div class="det">${k.dn.p.size} Pallet · ${k.dn.r.size} Rack · ช้า ${k.dn.late} แถว</div></div>
+        <div class="kpi trip"><div class="lbl">เที่ยวรถ (Shipping No.)</div><div class="val">${k.trip.done.size}</div>
+          <div class="det">ออกแล้ว${k.trip.open.size ? ` · ยิงแล้วยังไม่ปิด ${k.trip.open.size} เที่ยว` : ''}</div></div>
       </div>
       <div class="prog" title="สัดส่วน Pallet+Rack">
         <span style="width:${(tot(k.dn) / T) * 100}%;background:var(--c-done)"></span>
@@ -195,9 +201,11 @@ function renderWindows(rows) {
   const showWh = S.wh === 'ALL';
   const pr = (x) => (x.p.size || x.r.size ? `${n0(x.p.size)} / ${n0(x.r.size)}` : '<span class="z">-</span>');
   let tp = { od: [0, 0], pe: [0, 0], dn: [0, 0], sc: 0, bo: 0 };
+  const allTrips = new Set();
   const body = g.map((x) => {
     tp.od[0] += x.od.p.size; tp.od[1] += x.od.r.size; tp.pe[0] += x.pe.p.size; tp.pe[1] += x.pe.r.size;
     tp.dn[0] += x.dn.p.size; tp.dn[1] += x.dn.r.size; tp.sc += x.scan.size; tp.bo += x.boxOpen;
+    x.trips.forEach((t) => allTrips.add(t));
     const wh = x.w.startsWith('4') ? 'WH4' : x.w.startsWith('1') ? 'WH1' : '';
     return `<tr class="clickable${S.win === x.w ? ' sel' : ''}" data-win="${esc(x.w)}">
       ${showWh ? `<td>${wh}</td>` : ''}
@@ -206,6 +214,7 @@ function renderWindows(rows) {
       <td class="n c-od">${pr(x.od)}</td><td class="n c-pe">${pr(x.pe)}</td>
       <td class="n c-sc">${x.scan.size ? x.scan.size : '<span class="z">-</span>'}</td>
       <td class="n c-dn">${pr(x.dn)}</td>
+      <td class="n">${x.trips.size || '<span class="z">-</span>'}</td>
       <td class="n">${x.boxOpen ? x.boxOpen.toLocaleString() : '<span class="z">0</span>'}</td>
       <td class="t">${fmtShow(x.minOpen)}</td><td class="t">${fmtShow(x.maxOpen)}</td></tr>`;
   }).join('');
@@ -213,13 +222,44 @@ function renderWindows(rows) {
       ${showWh ? '<th>WH</th>' : ''}<th>Window Name</th><th>Dock</th><th>Supplier</th>
       <th class="n">เลยกำหนด<br>Pallet / Rack</th><th class="n">รอส่ง<br>Pallet / Rack</th>
       <th class="n">ยิงแล้ว<br>ยังไม่ขึ้นรถ</th><th class="n">ส่งแล้ว<br>Pallet / Rack</th>
-      <th class="n">กล่องค้าง<br>(Recept Box)</th><th>Due เร็วสุด<br>(ยังไม่ส่ง)</th><th>Due ช้าสุด<br>(ยังไม่ส่ง)</th></tr></thead>
-    <tbody>${body || `<tr><td colspan="11" class="hint">ไม่มีข้อมูลในช่วงเวลานี้</td></tr>`}</tbody>
+      <th class="n">เที่ยวรถ<br>(Shipping No.)</th><th class="n">กล่องค้าง<br>(Recept Box)</th><th>Due เร็วสุด<br>(ยังไม่ส่ง)</th><th>Due ช้าสุด<br>(ยังไม่ส่ง)</th></tr></thead>
+    <tbody>${body || `<tr><td colspan="12" class="hint">ไม่มีข้อมูลในช่วงเวลานี้</td></tr>`}</tbody>
     <tfoot><tr>${showWh ? '<td></td>' : ''}<td>รวม</td><td></td><td></td>
       <td class="n">${tp.od[0]} / ${tp.od[1]}</td><td class="n">${tp.pe[0]} / ${tp.pe[1]}</td>
-      <td class="n">${tp.sc}</td><td class="n">${tp.dn[0]} / ${tp.dn[1]}</td><td class="n">${tp.bo.toLocaleString()}</td><td></td><td></td></tr></tfoot>`;
+      <td class="n">${tp.sc}</td><td class="n">${tp.dn[0]} / ${tp.dn[1]}</td><td class="n">${allTrips.size}</td><td class="n">${tp.bo.toLocaleString()}</td><td></td><td></td></tr></tfoot>`;
   $$('#tblWin tr.clickable').forEach((tr) => tr.addEventListener('click', () => {
     S.win = S.win === tr.dataset.win ? null : tr.dataset.win; S.limit = 300; render();
+  }));
+}
+
+function renderTrips(rows) {
+  const g = byTrip(rows);
+  const showWh = S.wh === 'ALL';
+  const anySn = rows.some((r) => r.sn);
+  let tp = { p: 0, r: 0, b: 0, late: 0 };
+  const body = g.map((x) => {
+    tp.p += x.p.size; tp.r += x.r.size; tp.b += x.box; if (x.late) tp.late++;
+    const st = x.done === x.rows
+      ? (x.late ? `<span class="pill done_late${x.maxLate >= 15 ? ' big' : ''}">ออกแล้ว · ช้า ${x.late} แถว</span>` : '<span class="pill done_on">ออกแล้ว</span>')
+      : x.done ? `<span class="pill scan">ออกแล้วบางส่วน (${x.done}/${x.rows})</span>` : '<span class="pill scan">ยิงแล้ว ยังไม่ขึ้นรถ</span>';
+    return `<tr class="clickable" data-sn="${esc(x.sn)}">
+      ${showWh ? `<td>${[...x.wh].sort().join(', ')}</td>` : ''}
+      <td class="t"><b>${esc(x.sn)}</b></td><td class="t">${esc([...x.trucks].join(', ')) || '<span class="z">-</span>'}</td>
+      <td>${esc([...x.wins].sort().join(', '))}</td><td>${esc([...x.docks].sort().join(', '))}</td>
+      <td class="n">${n0(x.p.size)} / ${n0(x.r.size)}</td><td class="n">${x.box.toLocaleString()}</td>
+      <td class="t">${fmtShow(x.first)}${x.last && x.first && x.last - x.first >= 60000 ? ` – ${fmtShow(x.last)}` : ''}</td><td>${st}</td></tr>`;
+  }).join('');
+  const cols = showWh ? 9 : 8;
+  $('#tripCount').textContent = g.length ? `${g.length.toLocaleString()} เที่ยว` : '';
+  $('#tblTrip').innerHTML = `<thead><tr>${showWh ? '<th>WH</th>' : ''}<th>Shipping No.</th><th>Truck License</th><th>Window Name</th><th>Dock</th>
+      <th class="n">Pallet / Rack</th><th class="n">กล่อง</th><th>Shipping Time</th><th>สถานะ</th></tr></thead>
+    <tbody>${body || `<tr><td colspan="${cols}" class="hint">${anySn || !rows.length ? 'ไม่มีเที่ยวรถในช่วงเวลานี้'
+      : 'ไฟล์ WMS ที่อัปโหลดไว้ยังไม่มีคอลัมน์ Shipping No. — อัปโหลดไฟล์ใหม่ที่มีคอลัมน์นี้'}</td></tr>`}</tbody>
+    ${g.length ? `<tfoot><tr>${showWh ? '<td></td>' : ''}<td>รวม ${g.length} เที่ยว</td><td></td><td></td><td></td>
+      <td class="n">${tp.p} / ${tp.r}</td><td class="n">${tp.b.toLocaleString()}</td><td></td><td>${tp.late ? `ช้า ${tp.late} เที่ยว` : ''}</td></tr></tfoot>` : ''}`;
+  $$('#tblTrip tr.clickable').forEach((tr) => tr.addEventListener('click', () => {
+    const v = S.search === tr.dataset.sn ? '' : tr.dataset.sn; // click again to clear
+    S.search = v; $('#fSearch').value = v; S.limit = 300; render();
   }));
 }
 
@@ -261,15 +301,15 @@ function renderDetail(rows) {
   const shown = list.slice(0, S.limit);
   $('#tblDetail').innerHTML = `<thead><tr><th>WH</th><th>Order No.</th><th>Supplier</th><th>Part No.</th><th>Part Name</th>
     <th>Dock</th><th>Window</th><th>Pallet No.</th><th>ประเภท</th><th class="n">กล่อง</th><th>Due (WMS)</th><th>Due ที่ใช้</th>
-    <th>StockIn</th><th>Shipping Time</th><th>Truck License</th><th>สถานะ</th></tr></thead>
+    <th>StockIn</th><th>Shipping Time</th><th>Shipping No.</th><th>Truck License</th><th>สถานะ</th></tr></thead>
     <tbody>${shown.map((r) => `<tr>
       <td>${r.wh}</td><td class="t">${esc(r.o)}</td><td>${esc(r.s)}</td><td class="t">${esc(r.p)}</td><td>${esc(r.n)}</td>
       <td>${esc(r.d)}</td><td><b>${esc(r.w)}</b></td><td class="t">${esc(r.pl)}</td><td>${r.rk ? 'Rack' : 'Pallet'}</td>
       <td class="n">${r.bx}</td><td class="t">${fmtShow(r.wmsDue)}</td>
       <td class="t">${fmtShow(r.due)} <span class="src-tag">${r.src}</span></td>
       <td class="t">${fmtShow(fromKey(r.si))}</td>
-      <td class="t">${fmtShow(r.shipT)}</td><td class="t">${esc(r.tr)}</td><td>${statusPill(r)}</td></tr>`).join('')
-      || '<tr><td colspan="16" class="hint">ไม่มีรายการ</td></tr>'}</tbody>`;
+      <td class="t">${fmtShow(r.shipT)}</td><td class="t">${esc(r.sn)}</td><td class="t">${esc(r.tr)}</td><td>${statusPill(r)}</td></tr>`).join('')
+      || '<tr><td colspan="17" class="hint">ไม่มีรายการ</td></tr>'}</tbody>`;
   const more = $('#btnMore');
   more.hidden = list.length <= S.limit;
   more.textContent = `แสดงเพิ่ม (เหลืออีก ${(list.length - S.limit).toLocaleString()} แถว)`;
@@ -401,7 +441,7 @@ function bind() {
     const data = S.lastRows.map((r) => ({
       WH: r.wh, 'Order No.': r.o, Supplier: r.s, 'Part No.': r.p, 'Part Name': r.n, Dock: r.d, 'Window Name': r.w,
       'Pallet No.': r.pl, Type: r.rk ? 'Rack' : 'Pallet', 'Recept Box Count': r.bx, 'Due (WMS)': fmtShowFull(r.wmsDue),
-      'Due used': fmtShowFull(r.due), 'Due source': r.src, 'Shipping Time': fmtShowFull(r.shipT), 'Truck License': r.tr,
+      'Due used': fmtShowFull(r.due), 'Due source': r.src, 'Shipping Time': fmtShowFull(r.shipT), 'Shipping No.': r.sn, 'Truck License': r.tr,
       Status: r.st === ST.OVERDUE ? 'Overdue' : r.st === ST.PENDING ? 'Pending' : r.st === ST.DONE_LATE ? 'Shipped late' : 'Shipped on time',
       'Scanned no truck': r.scanned ? 'Yes' : '', 'Late (min)': r.lateMin,
     }));

@@ -219,6 +219,7 @@ export async function parseWmsFile(file) {
     dd: need('Due Date'), dt: need('Due Time'), st: need('StockIn Time'), sh: need('Shipping Time'),
     rf: need('RFID No.'), cf: need('Shipping Confirm'), tr: need('Truck License', 2), bx: need('Recept Box Count'),
     ro: colIndex(H, 'Recept Output No.'),
+    sn: colIndex(H, 'Shipping No.'), // optional: one Shipping No. = one truck trip
   };
   const out = [];
   for (let i = h + 1; i < rows.length; i++) {
@@ -238,6 +239,7 @@ export async function parseWmsFile(file) {
       dd: fmtKey(due), si: fmtKey(st), sh: fmtKey(sh), tr: truck,
       cf: str(r[C.cf]).toUpperCase() === 'CONFIRMED' ? 1 : 0,
       bx: Number(r[C.bx]) || 0,
+      sn: C.sn >= 0 ? str(r[C.sn]) : '',
     });
   }
   return out;

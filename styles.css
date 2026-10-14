@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }
 :root {
   --bg: #F4F6F9;
   --card: #FFFFFF;
@@ -75,7 +76,7 @@ input[type=search] { min-width: 260px; flex: 1; }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
 .kpi-wh { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
 .kpi-wh h3 { margin: 0 0 8px; font-size: 15px; display: flex; justify-content: space-between; }
-.kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.kpi-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
 .kpi { border-radius: 8px; padding: 8px 10px; border-left: 4px solid; background: #FAFAFA; }
 .kpi .lbl { font-size: 12px; color: var(--ink-2); }
 .kpi .val { font-size: 22px; font-weight: 700; line-height: 1.2; }
@@ -84,9 +85,11 @@ input[type=search] { min-width: 260px; flex: 1; }
 .kpi.pending { border-color: var(--c-pending); } .kpi.pending .val { color: var(--c-pending); }
 .kpi.scan { border-color: var(--c-scan); } .kpi.scan .val { color: #B45309; }
 .kpi.done { border-color: var(--c-done); } .kpi.done .val { color: #047857; }
+.kpi.trip { border-color: #7C3AED; } .kpi.trip .val { color: #6D28D9; }
 .prog { height: 6px; background: #F3F4F6; border-radius: 99px; overflow: hidden; margin-top: 10px; display: flex; }
 .prog span { display: block; height: 100%; }
 
+.table-wrap.short { max-height: 45vh; }
 .table-wrap { overflow: auto; max-height: 70vh; border: 1px solid var(--line); border-radius: 8px; }
 .tbl { border-collapse: collapse; width: 100%; font-size: 13px; }
 .tbl th { position: sticky; top: 0; background: var(--head); color: #fff; font-weight: 500; text-align: left; padding: 7px 8px; white-space: nowrap; z-index: 1; }
