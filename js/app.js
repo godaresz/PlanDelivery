@@ -71,7 +71,7 @@ function setRange(kind) {
 }
 function saveFilters() {
   lsSet('sc_filters', JSON.stringify({ s: $('#fStart').value, e: $('#fEnd').value, b: $('#fBacklog').checked, wh: S.wh,
-    mode: S.mode, snDate: S.snDate, snShift: S.snShift }));
+    mode: S.mode, snDate: S.snDate, snShift: S.snShift, q: ($('.quick .chip[data-q].on') || {}).dataset?.q || '' }));
 }
 function loadFilters() {
   try {
@@ -82,6 +82,7 @@ function loadFilters() {
       if (f.mode) S.mode = f.mode;
       if (f.snDate) S.snDate = f.snDate;
       if (f.snShift) S.snShift = f.snShift;
+      if (f.q) $$('.quick .chip[data-q]').forEach((c) => c.classList.toggle('on', c.dataset.q === f.q));
       return true;
     }
   } catch { /* ignore */ }
@@ -389,19 +390,20 @@ function tripsInView(whs, viewRows) {
 const calm = matchMedia('(prefers-reduced-motion: reduce)');
 let animT;
 function countUp(root) {
-  const t0 = performance.now(), items = [];
+  let t0 = null; const items = [];
   root.querySelectorAll('.kpi .val').forEach((el) => {
     const n = el.firstChild;
     if (!n || n.nodeType !== 3) return;
     const m = n.nodeValue.match(/^([\d,]+)(.*)$/s);
     if (!m) return;
     const to = +m[1].replace(/,/g, '');
-    if (to > 1) items.push([n, to, m[2]]);
+    if (to > 1) items.push([n, to, m[2], m[1].includes(',')]);
   });
   if (!items.length) return;
   const step = (t) => {
-    const k = Math.min(1, (t - t0) / 900), e = 1 - (1 - k) ** 3;
-    for (const [n, to, rest] of items) n.nodeValue = Math.round(to * e).toLocaleString() + rest;
+    if (t0 === null) t0 = t; // first frame's timestamp (render may have taken a while)
+    const k = Math.max(0, Math.min(1, (t - t0) / 900)), e = 1 - (1 - k) ** 3;
+    for (const [n, to, rest, comma] of items) { const v = Math.round(to * e); n.nodeValue = (comma ? v.toLocaleString() : String(v)) + rest; }
     if (k < 1) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
@@ -699,7 +701,7 @@ function renderPlan(all, scope, trips) {
     tot.n += sum(h, (c) => c.n); tot.est += sum(h, (c) => c.est); tot.sn += sum(h, (c) => c.sn.size);
     tot.left += sum(h, (c) => c.left.size); tot.p += sum(h, (c) => c.p); tot.r += sum(h, (c) => c.r); tot.open += sum(h, (c) => c.open); tot.hasSn += sum(h, (c) => c.hasSn);
   }
-  const peak = list.filter((h) => !h.before).reduce((m, h) => (sum(h, (c) => c.n) > (m ? sum(m, (c) => c.n) : -1) ? h : m), null);
+  const peak = list.filter((h) => !h.before && sum(h, (c) => c.n) > 0).reduce((m, h) => (!m || sum(h, (c) => c.n) > sum(m, (c) => c.n) ? h : m), null);
   const hourLbl = (h) => (h.before ? 'ค้างก่อนช่วง' : `${String(h.t.getHours()).padStart(2, '0')}:00–${String(h.t.getHours()).padStart(2, '0')}:59`);
   const dayLbl = (h) => (h.before ? `Due ก่อน ${fmtShow(start)}` : fmtShow(h.t).slice(0, 5));
   const tile = (cls, lbl, v, det = '') => `<div class="kpi ${cls}"><div class="lbl">${lbl}</div><div class="val">${v} <small>คัน</small></div><div class="det">${det}</div></div>`;
@@ -736,7 +738,7 @@ function renderPlan(all, scope, trips) {
         ${sum(h, (c) => c.left.size) ? `<circle cx="${cx(i)}" cy="${y(sum(h, (c) => c.left.size))}" r="4" class="dot"/>` : ''}</g>`;
     }).join('')}
     <path d="${line}" class="ln"/>
-    ${list.map((h, i) => { const v = sum(h, (c) => c.sn.size); return `<circle cx="${cx(i)}" cy="${y(v)}" r="3" class="lnp"/>${v ? `<text x="${cx(i) + 6}" y="${y(v) - 6}" class="lv">${v}</text>` : ''}`; }).join('')}
+    ${list.map((h, i) => { const v = sum(h, (c) => c.sn.size); return `<circle cx="${cx(i)}" cy="${y(v)}" r="3" class="lnp"/>${v ? `<text x="${cx(i) + 6}" y="${Math.abs(y(v) - y(sum(h, (c) => c.n))) < 16 ? y(v) + 15 : y(v) - 6}" class="lv">${v}</text>` : ''}`; }).join('')}
     </svg></div>`;
 
   // table: one row per hour; per WH: Plan trucks, work, assigned, left
