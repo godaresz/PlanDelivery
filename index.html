@@ -30,6 +30,7 @@
     <a href="#window" data-page="window"><span class="ic">☰</span>สรุป Window<b class="cnt" id="cntWin"></b></a>
     <a href="#trucks" data-page="trucks"><span class="ic">⛟</span>สรุปรถ<b class="cnt" id="cntTruck"></b></a>
     <a href="#est" data-page="est"><span class="ic">∑</span>ประมาณการรถ<b class="cnt" id="cntEst"></b></a>
+    <a href="#plan" data-page="plan"><span class="ic">◷</span>Plan รถรายชั่วโมง<b class="cnt" id="cntPlan"></b></a>
     <a href="#detail" data-page="detail"><span class="ic">≡</span>รายละเอียด<b class="cnt" id="cntDetail"></b></a>
     <a href="#data" data-page="data"><span class="ic">⇪</span>ข้อมูล &amp; กฎ</a>
   </nav>
@@ -147,6 +148,23 @@
         <p class="note" id="estNote"></p>
       </section>
       <div id="estBody"></div>
+    </div>
+
+    <!-- page: hourly truck plan -->
+    <div class="page" data-page="plan">
+      <section class="panel">
+        <div class="panel-h">
+          <h2>Plan รถรายชั่วโมง</h2>
+          <span class="hint">จำนวนรถที่ต้องใช้ในแต่ละชั่วโมง ตาม Due ของงานทั้งหมดในช่วงที่เลือก (ส่งแล้ว + ยังไม่ส่ง) ·
+            คำนวณแบบเดียวกับหน้าประมาณการรถ (กลุ่ม Dock + Window ที่ไปด้วยกัน และจำนวนพาเลทต่อคันจากประวัติ)</span>
+        </div>
+        <div id="planTiles" class="kpi-row trip-tiles"></div>
+        <div id="planChart" class="plan-chart"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-h"><h2>รายชั่วโมง</h2><span class="hint" id="planHint"></span></div>
+        <div class="table-wrap"><table class="tbl plan" id="tblPlan"></table></div>
+      </section>
     </div>
 
     <!-- page: detail -->

@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -414,6 +414,7 @@ function render(quiet = false) {
   try { renderAll(); } finally { if (animate) countUp(document.querySelector(`.page[data-page="${S.page}"]`) || document.body); }
 }
 function renderAll() {
+  S.models = new Map();
   const all = currentRows();
   const scope = S.wh === 'ALL' ? WHS : [S.wh];
   renderKpis(all, scope);
@@ -423,6 +424,7 @@ function renderAll() {
   renderTrips(trips, rows);
   renderOverview(rows, trips);
   const estTotal = renderEst(all, scope);
+  if (S.page === 'plan') renderPlan(all, scope, trips);
   renderDetail(rows);
   const badge = (id, n, cls = '') => { const el = $(id); el.textContent = n || ''; el.className = 'cnt ' + cls; };
   badge('#cntWin', byWindow(rows).filter((x) => x.od.p.size + x.od.r.size > 0).length, 'red');
@@ -639,12 +641,130 @@ function renderOverview(rows, trips) {
 // ---------- truck estimate page ----------
 const PNAME = Object.fromEntries(PERIODS.map(([k, n, t]) => [k, [n, t]]));
 const f1 = (v) => (v === null || v === undefined ? '-' : v.toFixed(1));
+// ---------- hourly truck plan ----------
+// Trucks needed per hour of Due: every pallet in the view (shipped + open) is estimated with the Est model in 1-hour
+// buckets; whole trucks are shared out per WH by largest remainder (hours add up to the WH total, like the Est page).
+// Shown next to it: trucks with a Shipping No. whose Due start is in the hour, and trucks that left in the hour.
+function renderPlan(all, scope, trips) {
+  const { start, end } = S.view;
+  const dueMode = S.mode !== 'sn' && start && end;
+  const hk = (d) => hourBucket(d).key;
+  const hours = new Map(); // key -> { key, t: Date, before, wh: { WH1: {...} } }
+  const slot = (key, t, before = false) => {
+    if (!hours.has(key)) hours.set(key, { key, t, before, wh: Object.fromEntries(scope.map((w) => [w, { p: 0, r: 0, open: 0, est: 0, n: 0, sn: new Set(), left: new Set() }])) });
+    return hours.get(key);
+  };
+  const BEFORE = '0000 before';
+  const place = (d) => (dueMode && d < start ? slot(BEFORE, start, true) : slot(hk(d), new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours())));
+  if (dueMode) for (let t = new Date(start.getFullYear(), start.getMonth(), start.getDate(), start.getHours()); t < end; t = new Date(t.getTime() + 3600000)) slot(hk(t), t);
+  const notes = [];
+  for (const wh of scope) {
+    const model = estModel(wh);
+    if (!model.whMean) { notes.push(`${wh}: ยังไม่มีประวัติรถที่ Confirm แล้ว จึงยังประมาณการไม่ได้`); continue; }
+    const est = estimateTrucks(all[wh], model, null, (due) => {
+      const h = place(due);
+      return { key: h.key };
+    });
+    const cells = est.groups.flatMap((o) => [...o.cells.entries()]);
+    const alloc = allocateWhole(cells.map(([, x]) => x.est));
+    cells.forEach(([bk, x], i) => {
+      const c = hours.get(bk).wh[wh];
+      c.p += x.p.size; c.r += x.r.size; c.open += x.open; c.est += x.est; c.n += alloc.out[i];
+    });
+  }
+  for (const x of trips) {
+    if (!scope.includes(x.whOwn)) continue;
+    if (x.dueStart) place(x.dueStart).wh[x.whOwn].sn.add(x.sn);
+    // departures go to their own hour, even outside the range (a truck may leave before its shift starts)
+    if (x.left && x.dep) { const d = x.dep; slot(hk(d), new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours())).wh[x.whOwn].left.add(x.sn); }
+  }
+  const list = [...hours.values()].sort((a, b) => a.key.localeCompare(b.key));
+  const sum = (h, f) => scope.reduce((a, w) => a + f(h.wh[w]), 0);
+  const tot = { n: 0, est: 0, sn: 0, left: 0, p: 0, r: 0, open: 0 };
+  for (const h of list) {
+    tot.n += sum(h, (c) => c.n); tot.est += sum(h, (c) => c.est); tot.sn += sum(h, (c) => c.sn.size);
+    tot.left += sum(h, (c) => c.left.size); tot.p += sum(h, (c) => c.p); tot.r += sum(h, (c) => c.r); tot.open += sum(h, (c) => c.open);
+  }
+  const peak = list.filter((h) => !h.before).reduce((m, h) => (sum(h, (c) => c.n) > (m ? sum(m, (c) => c.n) : -1) ? h : m), null);
+  const hourLbl = (h) => (h.before ? 'ค้างก่อนช่วง' : `${String(h.t.getHours()).padStart(2, '0')}:00–${String(h.t.getHours()).padStart(2, '0')}:59`);
+  const dayLbl = (h) => (h.before ? `Due ก่อน ${fmtShow(start)}` : fmtShow(h.t).slice(0, 5));
+  const tile = (cls, lbl, v, det = '') => `<div class="kpi ${cls}"><div class="lbl">${lbl}</div><div class="val">${v} <small>คัน</small></div><div class="det">${det}</div></div>`;
+  $('#planTiles').innerHTML = list.length ? [
+    tile('pending', 'รถตาม Plan (Est)', tot.n, `${f1(tot.est)} คัน · ${tot.p} Pallet · ${tot.r} Rack`),
+    tile('trip', 'จัดรถแล้ว (Shipping No.)', tot.sn, 'นับตาม Due เริ่มของรถ'),
+    tile('done', 'ออกแล้ว', tot.left, 'นับตามเวลาออกจริง'),
+    tile('overdue', 'ชั่วโมงที่ใช้รถมากสุด', peak ? sum(peak, (c) => c.n) : 0, peak ? `${dayLbl(peak)} ${hourLbl(peak)}` : ''),
+  ].join('') : '';
+  $('#cntPlan').textContent = tot.n || '';
+  $('#planHint').textContent = notes.join(' · ') || 'Plan = รถที่ต้องใช้ (ปัดเป็นคันเต็ม ยอดรวมเท่ากับหน้าประมาณการรถ) · จัดแล้ว = รถที่มี Shipping No. ซึ่ง Due เริ่มอยู่ในชั่วโมงนั้น · ออกแล้ว = เวลาออกจริง (ILMS / WMS)';
+
+  // chart: bars = trucks needed (Plan), line = trucks with a Shipping No., dots = trucks that left
+  const now = new Date();
+  if (!list.length) { $('#planChart').innerHTML = '<p class="hint">ไม่มีงานในช่วงเวลานี้</p>'; $('#tblPlan').innerHTML = ''; return; }
+  const W = Math.max(($('#planChart').clientWidth || 900) - 2, list.length * 40), H = 240, P = { l: 34, r: 12, t: 22, b: 38 };
+  const vmax = Math.max(1, ...list.map((h) => Math.max(sum(h, (c) => c.n), sum(h, (c) => c.sn.size), sum(h, (c) => c.left.size))));
+  const step = (W - P.l - P.r) / list.length, bw = Math.min(30, step * 0.62);
+  const y = (v) => P.t + (H - P.t - P.b) * (1 - v / vmax);
+  const ticks = [...new Set([0, Math.ceil(vmax / 2), vmax])];
+  const cx = (i) => P.l + step * i + step / 2;
+  const line = list.map((h, i) => `${i ? 'L' : 'M'}${cx(i).toFixed(1)},${y(sum(h, (c) => c.sn.size)).toFixed(1)}`).join('');
+  $('#planChart').innerHTML = `<div class="plan-legend"><span><i class="lg-bar"></i>รถตาม Plan (Est)</span><span><i class="lg-line"></i>จัดรถแล้ว (Shipping No.)</span><span><i class="lg-dot"></i>ออกแล้ว</span></div>
+    <div class="plan-scroll"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="รถที่ต้องใช้รายชั่วโมง">
+    ${ticks.map((v) => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${P.l - 6}" y="${y(v) + 4}" class="ax" text-anchor="end">${v}</text>`).join('')}
+    ${list.map((h, i) => {
+      const n = sum(h, (c) => c.n), x = cx(i) - bw / 2, cur = !h.before && now >= h.t && now < new Date(h.t.getTime() + 3600000);
+      return `<g class="pc-col${cur ? ' cur' : ''}">${cur ? `<rect x="${cx(i) - step / 2}" y="${P.t - 14}" width="${step}" height="${H - P.t - P.b + 14}" class="now"/>` : ''}
+        <rect x="${x}" y="${y(n)}" width="${bw}" height="${Math.max(0, H - P.b - y(n))}" rx="4" class="bar" style="animation-delay:${(i * 0.03).toFixed(2)}s"><title>${dayLbl(h)} ${hourLbl(h)}: Plan ${n} คัน · จัดแล้ว ${sum(h, (c) => c.sn.size)} · ออกแล้ว ${sum(h, (c) => c.left.size)}</title></rect>
+        ${n ? `<text x="${cx(i)}" y="${y(n) - 5}" class="bv" text-anchor="middle">${n}</text>` : ''}
+        <text x="${cx(i)}" y="${H - P.b + 15}" class="ax" text-anchor="middle">${h.before ? 'ก่อน' : String(h.t.getHours()).padStart(2, '0')}</text>
+        ${!h.before && (i === 0 || list[i - 1].before || hourBucket(list[i - 1].t).day !== hourBucket(h.t).day) ? `<text x="${cx(i)}" y="${H - P.b + 30}" class="ax d" text-anchor="middle">${fmtShow(h.t).slice(0, 5)}</text>` : ''}
+        ${sum(h, (c) => c.left.size) ? `<circle cx="${cx(i)}" cy="${y(sum(h, (c) => c.left.size))}" r="4" class="dot"/>` : ''}</g>`;
+    }).join('')}
+    <path d="${line}" class="ln"/>
+    ${list.map((h, i) => `<circle cx="${cx(i)}" cy="${y(sum(h, (c) => c.sn.size))}" r="3" class="lnp"/>`).join('')}
+    </svg></div>`;
+
+  // table: one row per hour; per WH: Plan trucks, work, assigned, left
+  const many = scope.length > 1;
+  const cell = (c) => `<td class="n plan-n"><b>${c.n}</b> <small>คัน</small> <span class="est-u">(${f1(c.est)})</span></td>
+    <td class="n">${c.p + c.r ? `${n0(c.p)} / ${n0(c.r)}` : '<span class="z">-</span>'}${c.open ? ` <span class="est-u c-pe">ค้าง ${c.open}</span>` : ''}</td>
+    <td class="n">${c.sn.size || '<span class="z">-</span>'}</td><td class="n">${c.left.size || '<span class="z">-</span>'}</td>`;
+  const maxN = Math.max(1, ...list.map((h) => sum(h, (c) => c.n)));
+  $('#tblPlan').innerHTML = `<thead><tr><th rowspan="2">วันที่</th><th rowspan="2">ช่วงเวลา (Due)</th>
+      ${scope.map((w) => `<th colspan="4" class="grp">${w}</th>`).join('')}${many ? '<th rowspan="2" class="n">รวมรถ (Plan)</th>' : ''}<th rowspan="2" class="plan-barh"></th></tr>
+    <tr>${scope.map(() => '<th class="n">Plan</th><th class="n">Pallet / Rack</th><th class="n">จัดแล้ว</th><th class="n">ออกแล้ว</th>').join('')}</tr></thead>
+    <tbody>${list.map((h) => {
+      const n = sum(h, (c) => c.n), cur = !h.before && now >= h.t && now < new Date(h.t.getTime() + 3600000);
+      const empty = !n && !sum(h, (c) => c.p + c.r + c.sn.size + c.left.size);
+      return `<tr class="${cur ? 'cur' : ''}${empty ? ' empty' : ''}${h.before ? ' before' : ''}"><td class="t">${dayLbl(h)}</td>
+        <td class="t"><b>${hourLbl(h)}</b>${cur ? ' <span class="now-tag">ตอนนี้</span>' : ''}</td>
+        ${scope.map((w) => cell(h.wh[w])).join('')}${many ? `<td class="n"><b>${n}</b> คัน</td>` : ''}
+        <td class="plan-bar"><span style="width:${(n / maxN) * 100}%"></span></td></tr>`;
+    }).join('')}</tbody>
+    <tfoot><tr><td colspan="2">รวม</td>${scope.map((w) => {
+      const c = list.reduce((a, h) => { const x = h.wh[w]; a.n += x.n; a.est += x.est; a.p += x.p; a.r += x.r; a.open += x.open; a.sn += x.sn.size; a.left += x.left.size; return a; }, { n: 0, est: 0, p: 0, r: 0, open: 0, sn: 0, left: 0 });
+      return `<td class="n">${c.n} คัน<div class="est-u">${f1(c.est)}</div></td><td class="n">${c.p} / ${c.r}${c.open ? `<div class="est-u">ค้าง ${c.open}</div>` : ''}</td><td class="n">${c.sn}</td><td class="n">${c.left}</td>`;
+    }).join('')}${many ? `<td class="n">${tot.n} คัน</td>` : ''}<td></td></tr></tfoot>`;
+}
+
+// load-group model learned from the truck history (+ trucks in the loaded rows); beforeKey = learn only from trucks dated before it.
+// Cached for one render so the Est and Plan pages share it.
+function estModel(wh, beforeKey = '') {
+  const ck = `${wh}|${beforeKey}`;
+  if (S.models.has(ck)) return S.models.get(ck);
+  const liveAcc = truckAccAdd(truckAcc(), S.view.full[wh]), live = truckAccLinks(liveAcc);
+  const saved = (S.hist && S.hist.links && S.hist.links[wh]) || { parts: {}, sups: {} };
+  let hist = mergeTruckHist((S.hist && S.hist[wh]) || {}, truckAccDone(liveAcc));
+  if (beforeKey) hist = Object.fromEntries(Object.entries(hist).filter(([, t]) => t.d && t.d < beforeKey));
+  const model = learnLoadGroups(hist, { parts: { ...saved.parts, ...live.parts }, sups: { ...saved.sups, ...live.sups } });
+  S.models.set(ck, model);
+  return model;
+}
 function renderEst(all, scope) {
   const cmp = S.estMode === 'cmp';
   $$('#estMode .tab').forEach((t) => t.classList.toggle('active', t.dataset.em === (cmp ? 'cmp' : 'open')));
   // compare mode learns only from trucks before the range, so the estimate is a fair prediction
   const startKey = (S.mode === 'sn' ? (S.snDate || '') : S.view.start ? ymd(S.view.start) : '').replace(/-/g, '');
-  const before = (h) => Object.fromEntries(Object.entries(h).filter(([, t]) => !startKey || (t.d && t.d < startKey)));
   const truckPallets = new Map();
   if (cmp) {
     const sets = new Map();
@@ -659,11 +779,7 @@ function renderEst(all, scope) {
   const notes = [];
   const chipList = (arr, hl) => arr.map((x) => `<span class="gchip${hl && hl.has(x) ? ' on' : ''}">${esc(x)}</span>`).join('');
   const html = scope.map((wh) => {
-    const liveAcc = truckAccAdd(truckAcc(), S.view.full[wh]), live = truckAccLinks(liveAcc);
-    const saved = (S.hist && S.hist.links && S.hist.links[wh]) || { parts: {}, sups: {} };
-    let hist = mergeTruckHist((S.hist && S.hist[wh]) || {}, truckAccDone(liveAcc));
-    if (cmp) hist = before(hist);
-    const model = learnLoadGroups(hist, { parts: { ...saved.parts, ...live.parts }, sups: { ...saved.sups, ...live.sups } });
+    const model = estModel(wh, cmp ? startKey : '');
     const work = cmp ? all[wh] : all[wh].filter((r) => !r.done);
     const est = estimateTrucks(work, model, cmp ? truckPallets : null);
     const known = [...model.groups.values()].filter((g) => !g.isNew);
@@ -759,7 +875,7 @@ function cmpLine(est, act, trucks) {
 }
 
 // ---------- pages ----------
-const PAGES = ['overview', 'window', 'trucks', 'est', 'detail', 'data'];
+const PAGES = ['overview', 'window', 'trucks', 'est', 'plan', 'detail', 'data'];
 function go(page) {
   if (location.hash !== '#' + page) location.hash = page; else showPage();
 }

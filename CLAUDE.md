@@ -30,7 +30,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
   deleted — a failed save keeps the old data; readers retry if a chunk's `v` ≠ meta.version. `arch_index` is updated
   field by field (`mergeDoc`, setDoc merge) so concurrent devices don't overwrite each other. Viewers watch only the meta docs.
 - `js/app.js` — UI (Thai labels), uploads, filters, rules dialog, Excel export.
-  Pages via URL hash: `#overview`, `#window`, `#trucks`, `#est`, `#detail`, `#data` (uploads + rules). Filter bar is shared.
+  Pages via URL hash: `#overview`, `#window`, `#trucks`, `#est`, `#plan`, `#detail`, `#data` (uploads + rules). Filter bar is shared.
 
 ## Business rules (agreed with the user — do not change without asking)
 1. **Due used**
@@ -98,6 +98,11 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
      out by pallets and add up; the comparison uses the estimate of the shipped part only (estS) so an unfinished range
      is still fair. Back-test on real data Sep–Oct (53 shifts per WH,
      learning only from earlier data): mean error WH1 4.1%, WH4 5.7%.
+
+12. **Hourly truck plan (page `#plan`)**: all pallets in the view (shipped + open), Est model in 1-hour buckets of the due
+   used (`hourBucket`); whole trucks per WH by largest remainder (adds up to ceil of the WH sum). Shown with: trucks whose
+   Due start is in the hour (Shipping No.) and trucks that left in the hour (ILMS/WMS departure, even outside the range).
+   Backlog rows due before the start go to one "ค้างก่อนช่วง" row.
 
 ## UI colours (user's standard palette)
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED

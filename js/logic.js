@@ -349,29 +349,33 @@ export function learnLoadGroups(hist, links = { parts: {}, sups: {} }) {
 // est = sum over pallets of (1 for a pallet, rackFactor for a rack) / group load in the shift of its due.
 // truckPallets (optional, for "estimate vs actual"): Map Shipping No. -> distinct pallets on that truck. A shipped pallet
 // then adds 1 / (pallets on its truck) to the cell's `act`, so the actual trucks are shared out by pallets and add up.
-export function estimateTrucks(openRows, model, truckPallets = null) {
+const ymdKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// default buckets: due day × period (ตี / เช้า / บ่าย / ทุ่ม)
+export const periodBucket = (due) => { const day = ymdKey(due), period = periodOf(due); return { key: `${day}|${'TMAE'.indexOf(period)}`, day, period }; };
+// 1-hour buckets
+export const hourBucket = (due) => { const day = ymdKey(due), h = due.getHours(); return { key: `${day} ${String(h).padStart(2, '0')}`, day, hour: h }; };
+export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = periodBucket) {
   const pal = new Map();
   for (const r of openRows) {
     if (!r.due) continue;
     const k = r.pl || r.k;
     const x = pal.get(k);
-    if (!x) pal.set(k, { due: r.due, rk: r.rk, box: r.bx, d: r.d, w: r.w, p: r.p, s: r.s, sn: r.cf === 1 ? r.sn : '' });
-    else { x.box += r.bx; if (r.due < x.due) x.due = r.due; if (!x.sn && r.cf === 1) x.sn = r.sn; }
+    if (!x) pal.set(k, { due: r.due, rk: r.rk, box: r.bx, d: r.d, w: r.w, p: r.p, s: r.s, sn: r.cf === 1 ? r.sn : '', open: !r.done });
+    else { x.box += r.bx; if (r.due < x.due) x.due = r.due; if (!x.sn && r.cf === 1) x.sn = r.sn; if (!r.done) x.open = true; }
   }
   const buckets = new Map(), rowsOut = new Map();
   const via = { Window: 0, Part: 0, Supplier: 0, new: 0 };
   for (const [k, pl] of pal) {
-    const day = `${pl.due.getFullYear()}-${String(pl.due.getMonth() + 1).padStart(2, '0')}-${String(pl.due.getDate()).padStart(2, '0')}`;
-    const bk = `${day}|${'TMAE'.indexOf(periodOf(pl.due))}`;
-    if (!buckets.has(bk)) buckets.set(bk, { key: bk, day, period: periodOf(pl.due) });
+    const bucket = bucketOf(pl.due), bk = bucket.key;
+    if (!buckets.has(bk)) buckets.set(bk, bucket);
     const [g, how] = model.groupOf(pl.d, pl.w, pl.p, pl.s);
     via[how]++;
     if (!rowsOut.has(g.id)) rowsOut.set(g.id, { group: g, cells: new Map(), openDocks: new Set(), openWins: new Set(), via: new Set() });
     const o = rowsOut.get(g.id);
     o.openDocks.add(pl.d || '-'); o.openWins.add(pl.w || '-'); if (how !== 'Window') o.via.add(how);
-    if (!o.cells.has(bk)) o.cells.set(bk, { p: new Set(), r: new Set(), box: 0, est: 0, estS: 0, act: 0, shipped: 0, trucks: new Set() });
+    if (!o.cells.has(bk)) o.cells.set(bk, { p: new Set(), r: new Set(), box: 0, est: 0, estS: 0, act: 0, shipped: 0, trucks: new Set(), open: 0 });
     const x = o.cells.get(bk);
-    (pl.rk ? x.r : x.p).add(k); x.box += pl.box;
+    (pl.rk ? x.r : x.p).add(k); x.box += pl.box; if (pl.open) x.open++;
     // shift: from the Window name (xDnn / xNnn) when it has one, else from the due time (back-test: WH4 error 12% -> 6%)
     const ws = String(pl.w || '')[1];
     const cap = g.cap[ws === 'D' || ws === 'N' ? ws : shiftOfTime(pl.due)] || g.mean;
