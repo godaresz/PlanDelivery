@@ -192,32 +192,44 @@ export const PERIODS = [['T', 'ตี', '00:00–05:59'], ['M', 'เช้า', 
 export const periodOf = (d) => PERIODS[Math.floor(d.getHours() / 6)][0];
 
 // ---------- truck history (compact summary kept for Est, independent of the archive) ----------
-// { sn: { v: 2, s: 'D'|'N', d: 'YYYYMMDD', p: pallets, r: racks,
-//         n: { 'Dock|Window': [pallets, racks] }, pt: { 'Dock|Window': [Part No.] }, sp: { 'Dock|Window': [Supplier] } } }
+// trucks: { sn: { v: 2, s: 'D'|'N', d: 'YYYYMMDD', p: pallets, r: racks, n: { 'Dock|Window': [pallets, racks] } } }
+// links:  { parts: { 'Part No.': 'Dock|Window' }, sups: { Supplier: 'Dock|Window' } }  (node it was shipped with most)
 // pallets / racks = distinct Pallet No. by type (RFID all zeros = Rack).
 export const shiftOfTime = (dt) => { const m = dt.getHours() * 60 + dt.getMinutes(); return m >= 450 && m < 1200 ? 'D' : 'N'; };
-export function truckSummaries(rows) {
-  const tr = new Map();
+// accumulator so history can be summarised day by day (a night truck spans two days) without holding every row
+export const truckAcc = () => Object.assign(new Map(), { parts: new Map(), sups: new Map() });
+export function truckAccAdd(acc, rows) {
   for (const r of rows) {
     if (!r.sn || !isComplete(r)) continue;
-    if (!tr.has(r.sn)) tr.set(r.sn, { P: new Set(), R: new Set(), n: new Map() });
-    const t = tr.get(r.sn), k = `${r.d || '-'}|${r.w || '-'}`, pl = r.pl || r.k;
+    if (!acc.has(r.sn)) acc.set(r.sn, { P: new Set(), R: new Set(), n: new Map() });
+    const t = acc.get(r.sn), k = `${r.d || '-'}|${r.w || '-'}`, pl = r.pl || r.k;
     (r.rk ? t.R : t.P).add(pl);
-    if (!t.n.has(k)) t.n.set(k, { P: new Set(), R: new Set(), parts: new Set(), sups: new Set() });
+    if (!t.n.has(k)) t.n.set(k, { P: new Set(), R: new Set() });
     const x = t.n.get(k);
     (r.rk ? x.R : x.P).add(pl);
-    if (r.p) x.parts.add(r.p);
-    if (r.s) x.sups.add(r.s);
+    for (const [m, key] of [[acc.parts, r.p], [acc.sups, r.s]]) {
+      if (!key) continue;
+      if (!m.has(key)) m.set(key, new Map());
+      const c = m.get(key); c.set(k, (c.get(k) || 0) + 1);
+    }
   }
+  return acc;
+}
+export function truckAccLinks(acc) {
+  const best = (m) => Object.fromEntries([...m].map(([key, c]) => [key, [...c].sort((a, b) => b[1] - a[1])[0][0]]));
+  return { parts: best(acc.parts), sups: best(acc.sups) };
+}
+export function truckAccDone(acc) {
   const out = {};
-  for (const [sn, t] of tr) {
+  for (const [sn, t] of acc) {
     const m = /^(\d{8})\d([DN])/i.exec(sn);
-    const n = {}, pt = {}, sp = {};
-    for (const [k, x] of t.n) { n[k] = [x.P.size, x.R.size]; pt[k] = [...x.parts]; sp[k] = [...x.sups]; }
-    out[sn] = { v: 2, s: m ? m[2].toUpperCase() : '', d: m ? m[1] : '', p: t.P.size, r: t.R.size, n, pt, sp };
+    const n = {};
+    for (const [k, x] of t.n) n[k] = [x.P.size, x.R.size];
+    out[sn] = { v: 2, s: m ? m[2].toUpperCase() : '', d: m ? m[1] : '', p: t.P.size, r: t.R.size, n };
   }
   return out;
 }
+export const truckSummaries = (rows) => truckAccDone(truckAccAdd(truckAcc(), rows));
 // merge summaries: a truck seen again keeps the larger counts (rows of one truck can arrive in parts);
 // summaries from the first version (no pallet / rack split) are replaced
 export function mergeTruckHist(old, add, keepDays = 365, now = new Date()) {
@@ -225,14 +237,12 @@ export function mergeTruckHist(old, add, keepDays = 365, now = new Date()) {
   for (const [sn, t] of Object.entries(add)) {
     const o = out[sn];
     if (!o || o.v !== 2) { out[sn] = t; continue; }
-    const n = { ...o.n }, pt = { ...o.pt }, sp = { ...o.sp };
+    const n = { ...o.n };
     for (const [k, v] of Object.entries(t.n)) {
       const a = n[k] || [0, 0];
       n[k] = [Math.max(a[0], v[0]), Math.max(a[1], v[1])];
-      pt[k] = [...new Set([...(pt[k] || []), ...(t.pt[k] || [])])];
-      sp[k] = [...new Set([...(sp[k] || []), ...(t.sp[k] || [])])];
     }
-    out[sn] = { ...o, p: Math.max(o.p, t.p), r: Math.max(o.r, t.r), n, pt, sp };
+    out[sn] = { ...o, p: Math.max(o.p, t.p), r: Math.max(o.r, t.r), n };
   }
   const c = new Date(now.getTime() - keepDays * 86400000);
   const cut = `${c.getFullYear()}${String(c.getMonth() + 1).padStart(2, '0')}${String(c.getDate()).padStart(2, '0')}`;
@@ -247,8 +257,8 @@ export function mergeTruckHist(old, add, keepDays = 365, now = new Date()) {
 // fewer than 3 trucks -> fall back (shift -> group -> warehouse).
 // Unknown Dock|Window -> group of the same Window, else of the Part No. / Supplier most often shipped with, else new.
 export const LINK_MIN = 2, LINK_SHARE = 0.3, MIN_TRUCKS = 3;
-export function learnLoadGroups(hist) {
-  const norm = (t) => (t.v === 2 ? t : { ...t, p: t.u || 0, r: 0, n: Object.fromEntries(Object.entries(t.n || {}).map(([k, v]) => [k, [v, 0]])), pt: {}, sp: {} });
+export function learnLoadGroups(hist, links = { parts: {}, sups: {} }) {
+  const norm = (t) => (t.v === 2 ? t : { ...t, p: t.u || 0, r: 0, n: Object.fromEntries(Object.entries(t.n || {}).map(([k, v]) => [k, [v, 0]])) });
   // skip shift-days whose average load is < 60% of the median shift-day (incomplete uploads, e.g. before Shipping No.)
   const byDay = new Map();
   for (const t0 of Object.values(hist)) { const t = norm(t0); const k = t.d + t.s; if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(t); }
@@ -286,15 +296,11 @@ export function learnLoadGroups(hist) {
     groups.get(g).nodes.push(k);
   }
   const all = { loads: [], D: [], N: [] };
-  const vote = { part: new Map(), sup: new Map() }; // Part No. / Supplier -> Map(group -> trucks)
-  const addVote = (m, key, g) => { if (!m.has(key)) m.set(key, new Map()); const x = m.get(key); x.set(g, (x.get(g) || 0) + 1); };
   for (const t of trucks) {
     const per = new Map();
     for (const [k, v] of Object.entries(t.n)) {
       const g = find(k); per.set(g, (per.get(g) || 0) + eq(v[0], v[1]));
       groups.get(g).P += v[0]; groups.get(g).R += v[1];
-      (t.pt[k] || []).forEach((x) => addVote(vote.part, x, g));
-      (t.sp[k] || []).forEach((x) => addVote(vote.sup, x, g));
     }
     if (!per.size) continue;
     const g = groups.get([...per].sort((a, b) => b[1] - a[1])[0][0]);
@@ -313,16 +319,16 @@ export function learnLoadGroups(hist) {
     g.cap = { D: g.D.length >= MIN_TRUCKS ? mean(g.D) : g.own ? g.mean : whShift.D,
       N: g.N.length >= MIN_TRUCKS ? mean(g.N) : g.own ? g.mean : whShift.N };
   }
-  const best = (m, key) => { const x = m.get(key); return x ? [...x].sort((a, b) => b[1] - a[1])[0][0] : null; };
+  const viaLink = (map, key) => { const node = key && map && map[key]; return node && par.has(node) ? find(node) : null; };
   const byWindow = new Map();
   for (const k of cnt.keys()) byWindow.set(k.split('|')[1], find(k));
   const groupOf = (d, w, part, sup) => {
     const k = `${d || '-'}|${w || '-'}`;
     if (par.has(k)) return [groups.get(find(k)), 'Window'];
     if (byWindow.has(w || '-')) return [groups.get(byWindow.get(w || '-')), 'Window'];
-    const gp = part && best(vote.part, part);
+    const gp = viaLink(links.parts, part);
     if (gp) return [groups.get(gp), 'Part'];
-    const gs = sup && best(vote.sup, sup);
+    const gs = viaLink(links.sups, sup);
     if (gs) return [groups.get(gs), 'Supplier'];
     if (!groups.has(k)) groups.set(k, { id: k, nodes: [k], loads: [], D: [], N: [], P: 0, R: 0, docks: [d || '-'], windows: [w || '-'],
       n: 0, own: false, mean: whMean, cap: whShift, isNew: true });
@@ -358,7 +364,9 @@ export function estimateTrucks(openRows, model) {
     if (!o.cells.has(bk)) o.cells.set(bk, { p: new Set(), r: new Set(), box: 0, est: 0 });
     const x = o.cells.get(bk);
     (pl.rk ? x.r : x.p).add(k); x.box += pl.box;
-    const cap = g.cap[shiftOfTime(pl.due)] || g.mean;
+    // shift: from the Window name (xDnn / xNnn) when it has one, else from the due time (back-test: WH4 error 12% -> 6%)
+    const ws = String(pl.w || '')[1];
+    const cap = g.cap[ws === 'D' || ws === 'N' ? ws : shiftOfTime(pl.due)] || g.mean;
     x.est += cap ? (pl.rk ? model.rackFactor : 1) / cap : 0;
   }
   for (const o of rowsOut.values()) for (const x of o.cells.values()) x.units = x.p.size + x.r.size;

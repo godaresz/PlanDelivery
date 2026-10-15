@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, allocateWhole, truckSummaries, mergeTruckHist, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -232,6 +232,26 @@ function renderArchive() {
       <a href="#data" class="btn ghost sm">ไปที่หน้าข้อมูล</a>`;
   }
 }
+// rebuild the truck history for Est from every archived day + active data (one archive day at a time)
+async function rebuildHist() {
+  const idx = S.data.archIndex || {};
+  const hist = { WH1: {}, WH4: {}, links: {} };
+  for (const wh of WHS) {
+    const days = Object.keys(idx[wh] || {}).sort();
+    const acc = truckAcc();
+    for (let i = 0; i < days.length; i++) {
+      toast(`กำลังสร้างสรุปรถ ${wh}: ประวัติวันที่ ${i + 1}/${days.length}…`, false, 600000);
+      truckAccAdd(acc, await store.loadArchiveDay(wh, days[i]));
+    }
+    truckAccAdd(acc, S.data[wh].data || []);
+    hist[wh] = truckAccDone(acc);
+    hist.links[wh] = truckAccLinks(acc);
+  }
+  await store.saveTruckHist(hist, { WH1: Object.keys(hist.WH1).length, WH4: Object.keys(hist.WH4).length, rebuilt: new Date().toISOString() });
+  toast(`สร้างสรุปรถใหม่แล้ว: WH1 ${Object.keys(hist.WH1).length.toLocaleString()} คัน · WH4 ${Object.keys(hist.WH4).length.toLocaleString()} คัน`, false, 9000);
+  await reload();
+}
+
 // auto: when a signed-in user opens the app and a quarter is due but not exported yet, export it (once per visit)
 async function autoExport() {
   if (!S.data || !S.user) return;
@@ -280,7 +300,14 @@ function renderSources() {
     return ds.length ? `<b>${wh}</b> ${ds.length} วัน · ${n.toLocaleString()} แถว (${dmy(new Date(ds[0] + 'T00:00'))} – ${dmy(new Date(ds[ds.length - 1] + 'T00:00'))})` : ''; })
     .filter(Boolean);
   $('#srcWMS .src-meta').innerHTML += `<div class="arch-meta">ประวัติที่ส่งแล้ว (ไม่ลบ): ${arch.length ? arch.join(' · ') : 'ยังไม่มี'}</div>`
-    + `<div class="arch-meta">สรุปรถสำหรับประมาณการ: ${WHS.map((wh) => `<b>${wh}</b> ${Object.keys((S.hist && S.hist[wh]) || {}).length.toLocaleString()} คัน`).join(' · ')}</div>`;
+    + `<div class="arch-meta">สรุปรถสำหรับประมาณการ: ${WHS.map((wh) => `<b>${wh}</b> ${Object.keys((S.hist && S.hist[wh]) || {}).length.toLocaleString()} คัน`).join(' · ')}
+      ${WHS.some((wh) => Object.values((S.hist && S.hist[wh]) || {}).some((t) => t.v !== 2)) || (S.hist && !S.hist.links && Object.keys(S.hist.WH1 || {}).length)
+        ? '<span class="warn-tag">ต้องสร้างใหม่ (รูปแบบเก่า)</span>' : ''}
+      <button class="btn ghost sm admin-only" id="btnRebuild">สร้างสรุปรถใหม่จากประวัติทั้งหมด</button></div>`;
+  $('#btnRebuild').addEventListener('click', () => {
+    if (!confirm('สร้างสรุปรถสำหรับประมาณการใหม่ จากประวัติทุกวัน + ข้อมูลปัจจุบัน?\n(โหลดประวัติทั้งหมด 1 ครั้ง อาจใช้เวลา 1–3 นาที)')) return;
+    rebuildHist().catch((e) => toast('สร้างไม่สำเร็จ: ' + e.message, true, 9000));
+  });
   const im = S.data.ilms.meta;
   const sns = new Set(WHS.flatMap((wh) => (S.data[wh].data || []).map((r) => r.sn).filter(Boolean)));
   const matched = [...S.ilmsMap.keys()].filter((tp) => sns.has(tp)).length;
@@ -573,7 +600,10 @@ function renderEst(all, scope) {
   const notes = [];
   const chipList = (arr, hl) => arr.map((x) => `<span class="gchip${hl && hl.has(x) ? ' on' : ''}">${esc(x)}</span>`).join('');
   const html = scope.map((wh) => {
-    const model = learnLoadGroups(mergeTruckHist((S.hist && S.hist[wh]) || {}, truckSummaries(S.view.full[wh])));
+    const liveAcc = truckAccAdd(truckAcc(), S.view.full[wh]), live = truckAccLinks(liveAcc);
+    const saved = (S.hist && S.hist.links && S.hist.links[wh]) || { parts: {}, sups: {} };
+    const model = learnLoadGroups(mergeTruckHist((S.hist && S.hist[wh]) || {}, truckAccDone(liveAcc)),
+      { parts: { ...saved.parts, ...live.parts }, sups: { ...saved.sups, ...live.sups } });
     const open = all[wh].filter((r) => !r.done);
     const est = estimateTrucks(open, model);
     const known = [...model.groups.values()].filter((g) => !g.isNew);
@@ -635,7 +665,7 @@ function renderEst(all, scope) {
     ...PERIODS.map(([k, n, t]) => tile('scan', `ช่วง${n}`, `${perPeriod[k]} <small>คัน</small>`, t)),
   ].join('');
   $('#estNote').textContent = `วิธีคิด: จับกลุ่ม Dock + Window ที่เคยขึ้นรถคันเดียวกัน (ด้วยกัน ≥ ${LINK_MIN} ครั้ง และ ≥ ${LINK_SHARE * 100}% ของครั้งที่ขึ้นรถ)
-    แล้วคิด Est = หน่วยค้างของกลุ่ม (Pallet + Rack) ÷ หน่วยเฉลี่ยต่อคันของกลุ่มในกะนั้น (กะเช้า 07:30–19:59 / กะดึก ตาม Due ของพาเลท;
+    แล้วคิด Est = หน่วยค้างของกลุ่ม (Pallet + Rack) ÷ หน่วยเฉลี่ยต่อคันของกลุ่มในกะนั้น (กะดูจากชื่อ Window เช่น 1D05 = กะเช้า, 1N05 = กะดึก; ถ้าไม่มีดูจากเวลา Due;
     น้อยกว่า 3 คันใช้ค่าของกลุ่ม หรือค่าเฉลี่ย WH) · ประวัติรถเก็บสรุปไว้แยก ใช้ได้ทั้งหมดแม้ข้อมูลถูกย้ายเข้าประวัติแล้ว ·
     Rack คิดพื้นที่เทียบ Pallet ตามประวัติ (รถขน Pallet ล้วน ÷ รถขน Rack ล้วน) · Window ที่ไม่เคยมีในประวัติ จัดกลุ่มจาก Part No. แล้ว Supplier ·
     จำนวนรถเต็มคัน = ปัดขึ้นจากผลรวมทศนิยมครั้งเดียว แล้วแบ่งลงแต่ละช่องตามเศษที่มากที่สุด (ผลรวมทุกช่องเท่ากับยอดรวม) · ${notes.join(' · ')}`;
@@ -773,7 +803,10 @@ async function onUpload(e) {
           S.arch.clear();
         }
         // truck summaries for Est (kept separately, so history older than the active data is still used)
-        hist[wh] = mergeTruckHist(hist[wh] || {}, truckSummaries(m.rows.concat(m.toArchive)));
+        const acc = truckAccAdd(truckAcc(), m.rows.concat(m.toArchive));
+        hist[wh] = mergeTruckHist(hist[wh] || {}, truckAccDone(acc));
+        const ln = truckAccLinks(acc), old = (hist.links && hist.links[wh]) || { parts: {}, sups: {} };
+        hist.links = { ...(hist.links || {}), [wh]: { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } } };
         await store.saveWms(wh, m.rows, { fileName: file.name, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped });
         msgs.push(`${wh} ${split[wh].length.toLocaleString()} แถว` + (m.skipped ? ` · ข้ามที่ Confirm แล้ว ${m.skipped.toLocaleString()}` : '')
           + (m.kept ? ` · เก็บที่ส่งแล้วจากรอบก่อน ${m.kept.toLocaleString()}` : '')

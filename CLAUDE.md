@@ -18,8 +18,10 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 - `js/store.js` — Firestore / localStorage. All data lives in collection `shipcheck`:
   `slide_meta` + `slide_c0..n`, `WH1_meta` + `WH1_c*`, `WH4_meta` + `WH4_c*`, `ilms_meta` + `ilms_c*`, `rules`,
   archive `arch_<WH>_<YYYYMMDD>_meta` + `_c*` (shipped rows by ship day, never deleted) + `arch_index`.
-  `truckhist_meta` + `_c*` = compact truck summaries for Est `{WH1: {sn: {s, d, u, n: {'Dock|Window': units}}}}`,
-  updated on every WMS upload (max per Dock|Window), kept 365 days, NOT removed by the quarterly delete.
+  `truckhist_meta` + `_c*` = compact truck summaries for Est
+  `{WH1: {sn: {v:2, s, d, p, r, n: {'Dock|Window': [pallets, racks]}}}, WH4: {...}, links: {WH1: {parts: {part: node}, sups: {...}}}}`
+  (~0.5 MB for 2.5 months), updated on every WMS upload (max per Dock|Window), kept 365 days, NOT removed by the quarterly
+  delete. Data page button "สร้างสรุปรถใหม่จากประวัติทั้งหมด" rebuilds it from every archive day (one day at a time).
   Viewers load the archive only for the days being viewed (±1 day).
   Payloads are JSON split into ≤700k-char chunk docs so a page load is ~10 reads. Viewers watch only the meta docs.
 - `js/app.js` — UI (Thai labels), uploads, filters, rules dialog, Excel export.
@@ -77,9 +79,11 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    - Load groups ("ไปด้วยกัน"): Dock|Window nodes that shared a truck ≥ 2 times and in ≥ 30% of the less frequent
      node's trucks are linked. Unknown Dock|Window → group of the same Window → of the Part No. → of the Supplier.
    - Rack space = rackFactor pallets (mean pallets on pallet-only trucks ÷ mean racks on rack-only trucks; ≈1.0 now).
-   - Group load per truck (pallet-equivalents) by shift D/N (< 3 trucks → group mean → WH shift mean).
+   - Group load per truck (pallet-equivalents) by shift D/N (< 3 trucks → group mean → WH shift mean). A pallet's shift
+     comes from its Window name (xDnn / xNnn), else from its due time.
    - Each pallet adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = ceil(sum), shared out
-     to cells by largest remainder so cells add up to the total. Out-of-sample back-test 10–14/10: mean error ≈ 7%.
+     to cells by largest remainder so cells add up to the total. Back-test on real data Sep–Oct (53 shifts per WH,
+     learning only from earlier data): mean error WH1 4.1%, WH4 5.7%.
 
 ## UI colours (user's standard palette)
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED

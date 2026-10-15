@@ -236,3 +236,5 @@ input[type=date] { font: inherit; padding: 6px 8px; border: 1px solid var(--line
 .est-v small { font-size: 11px; font-weight: 500; }
 .grp-ref { margin-top: 10px; font-size: 13px; } .grp-ref summary { cursor: pointer; color: var(--c-pending); font-weight: 500; margin-bottom: 8px; }
 .est-v.zero { color: #9CA3AF; font-weight: 500; }
+.warn-tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 99px; background: #FEF3C7; color: #92400E; margin: 0 6px; }
+#btnRebuild { margin-top: 6px; }
