@@ -547,7 +547,7 @@ function renderTrips(list, rows) {
   const shown = list.filter(truckFilter[S.truckSt] || truckFilter.ALL);
 
   const anySn = WHS.some((wh) => S.view.full[wh].some((r) => r.sn));
-  const cols = showWh ? 12 : 11;
+  const cols = showWh ? 13 : 12;
   $('#tripCount').textContent = list.length ? `${list.length.toLocaleString()} คัน` : '';
   // trucks of other shifts that carried rows due in this range (shipped early / late)
   const inList = new Set(list.map((x) => x.sn));
@@ -562,7 +562,7 @@ function renderTrips(list, rows) {
   }
   $$('#tripOther a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openTruck(a.dataset.sn); }));
   $('#tblTrip').innerHTML = `<thead><tr>${showWh ? '<th>WH</th>' : ''}<th>Shipping No.</th><th>กะ</th><th class="n">Trip</th>
-      <th>Truck License</th><th>Window Name</th><th class="n">Pallet / Rack</th><th class="n">กล่อง</th>
+      <th>Truck License</th><th>Dock</th><th>Window Name</th><th class="n">Pallet / Rack</th><th class="n">กล่อง</th>
       <th>Due เริ่ม – จบ</th><th>ออกจริง</th><th class="n">เทียบ Due เริ่ม</th><th>สถานะ</th></tr></thead>
     <tbody>${shown.map((x) => `<tr class="clickable" data-sn="${esc(x.sn)}">
       ${showWh ? `<td>${x.whOwn}${[...x.wh].some((w) => w !== x.whOwn) ? `<div class="src-tag">มีของ ${[...x.wh].filter((w) => w !== x.whOwn).join(', ')}</div>` : ''}</td>` : ''}
@@ -570,6 +570,7 @@ function renderTrips(list, rows) {
       <td>${x.info ? `${SHIFT_TH[x.info.shift]} <span class="src-tag">${fmtShow(x.info.date).slice(0, 5)}</span>` : '-'}</td>
       <td class="n">${x.info ? x.info.no : '-'}</td>
       <td class="t">${esc([...x.trucks].join(', ')) || '<span class="z">-</span>'}</td>
+      <td>${esc([...x.docks].sort().join(', ')) || '-'}</td>
       <td class="wins">${esc([...x.wins].sort().join(', '))}</td>
       <td class="n">${n0(x.p.size)} / ${n0(x.r.size)}</td><td class="n">${x.box.toLocaleString()}</td>
       <td class="t">${dueRange(x.dueStart, x.dueEnd)}</td>
@@ -597,9 +598,11 @@ function renderOverview(rows, trips) {
   }).join('') : '<p class="hint">ไม่มี Window ที่เลยกำหนด 👍</p>';
   $$('#ovWin .bar-row').forEach((el) => el.addEventListener('click', () => { S.win = el.dataset.win; S.status = 'ALL'; go('detail'); }));
   const open = trips.filter((x) => !x.left).sort((a, b) => (a.dueStart || 0) - (b.dueStart || 0)).slice(0, 10);
-  $('#ovTruck').innerHTML = open.length ? `<table class="tbl mini"><thead><tr><th>Shipping No.</th><th>Window</th><th>Due เริ่ม – จบ</th><th>สถานะ</th></tr></thead>
+  $('#ovTruck').innerHTML = open.length ? `<table class="tbl mini"><thead><tr><th>Shipping No.</th><th>Dock</th><th>Window</th><th class="n">Pallet</th><th class="n">Rack</th><th>Due เริ่ม – จบ</th><th>สถานะ</th></tr></thead>
     <tbody>${open.map((x) => `<tr class="clickable" data-sn="${esc(x.sn)}"><td class="t"><b>${esc(x.sn)}</b></td>
-      <td class="wins">${esc([...x.wins].sort().join(', '))}</td><td class="t">${dueRange(x.dueStart, x.dueEnd)}</td><td>${tripStatus(x)}</td></tr>`).join('')}</tbody></table>`
+      <td>${esc([...x.docks].sort().join(', ')) || '-'}</td>
+      <td class="wins">${esc([...x.wins].sort().join(', '))}</td>
+      <td class="n">${n0(x.p.size)}</td><td class="n">${n0(x.r.size)}</td><td class="t">${dueRange(x.dueStart, x.dueEnd)}</td><td>${tripStatus(x)}</td></tr>`).join('')}</tbody></table>`
     : '<p class="hint">ไม่มีรถค้าง</p>';
   $$('#ovTruck tr.clickable').forEach((tr) => tr.addEventListener('click', () => openTruck(tr.dataset.sn)));
 }
