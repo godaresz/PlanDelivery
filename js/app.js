@@ -135,7 +135,7 @@ function ensureArchive(start, end) {
     missing.forEach(([, , key]) => S.archLoading.add(key));
     toast(`กำลังโหลดประวัติ ${days.length} วัน…`, false, 30000);
     Promise.all(missing.map(([wh, x, key]) => store.loadArchiveDay(wh, x).then((rows) => S.arch.set(key, rows))))
-      .then(() => { missing.forEach(([, , key]) => S.archLoading.delete(key)); $('#toast').hidden = true; render(); })
+      .then(() => { missing.forEach(([, , key]) => S.archLoading.delete(key)); $('#toast').hidden = true; render(true); })
       .catch((e) => { missing.forEach(([, , key]) => S.archLoading.delete(key)); toast('โหลดประวัติไม่สำเร็จ: ' + e.message, true); });
   }
   return days;
@@ -412,7 +412,7 @@ function render(quiet = false) {
   const animate = !quiet && !calm.matches;
   if (animate) {
     document.body.classList.add('anim');
-    clearTimeout(animT); animT = setTimeout(() => document.body.classList.remove('anim'), 1500);
+    clearTimeout(animT); animT = setTimeout(() => document.body.classList.remove('anim'), 1800);
   }
   try { renderAll(); } finally { if (animate) countUp(document.querySelector(`.page[data-page="${S.page}"]`) || document.body); }
 }
@@ -427,7 +427,7 @@ function renderAll() {
   renderTrips(trips, rows);
   renderOverview(rows, trips);
   const estTotal = renderEst(all, scope);
-  if (S.page === 'plan') renderPlan(all, scope, trips);
+  renderPlan(all, scope, trips); // also keeps the nav badge current on other pages
   renderDetail(rows);
   const badge = (id, n, cls = '') => { const el = $(id); el.textContent = n || ''; el.className = 'cnt ' + cls; };
   badge('#cntWin', byWindow(rows).filter((x) => x.od.p.size + x.od.r.size > 0).length, 'red');
@@ -651,6 +651,10 @@ const f1 = (v) => (v === null || v === undefined ? '-' : v.toFixed(1));
 function renderPlan(all, scope, trips) {
   const { start, end } = S.view;
   const dueMode = S.mode !== 'sn' && start && end;
+  if (S.mode !== 'sn' && !dueMode) {
+    $('#planTiles').innerHTML = ''; $('#cntPlan').textContent = ''; $('#tblPlan').innerHTML = '';
+    $('#planChart').innerHTML = '<p class="hint">เลือกเวลาเริ่มและเวลาจบก่อน</p>'; return;
+  }
   const hk = (d) => hourBucket(d).key;
   const hours = new Map(); // key -> { key, t: Date, before, wh: { WH1: {...} } }
   const slot = (key, t, before = false) => {
@@ -659,7 +663,14 @@ function renderPlan(all, scope, trips) {
   };
   const BEFORE = '0000 before';
   const place = (d) => (dueMode && d < start ? slot(BEFORE, start, true) : slot(hk(d), new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours())));
-  if (dueMode) for (let t = new Date(start.getFullYear(), start.getMonth(), start.getDate(), start.getHours()); t < end; t = new Date(t.getTime() + 3600000)) slot(hk(t), t);
+  // empty hours are shown too: every hour of the range (due mode) or of the selected ship date's shift(s)
+  let r0 = start, r1 = end;
+  if (!dueMode && S.snDate) {
+    const [y, m, d] = S.snDate.split('-').map(Number);
+    r0 = new Date(y, m - 1, d, S.snShift === 'N' ? 20 : 7, S.snShift === 'N' ? 0 : 30);
+    r1 = S.snShift === 'D' ? new Date(y, m - 1, d, 20, 0) : new Date(y, m - 1, d + 1, 7, 30);
+  }
+  if (r0 && r1) for (let t = new Date(r0.getFullYear(), r0.getMonth(), r0.getDate(), r0.getHours()); t < r1; t = new Date(t.getTime() + 3600000)) slot(hk(t), t);
   const notes = [];
   for (const wh of scope) {
     const model = estModel(wh);
@@ -699,7 +710,7 @@ function renderPlan(all, scope, trips) {
     tile('overdue', 'ชั่วโมงที่ใช้รถมากสุด', peak ? sum(peak, (c) => c.n) : 0, peak ? `${dayLbl(peak)} ${hourLbl(peak)}` : ''),
   ].join('') : '';
   $('#cntPlan').textContent = tot.n || '';
-  $('#planHint').textContent = notes.join(' · ') || 'Plan = รถที่ต้องใช้ (ปัดเป็นคันเต็ม ยอดรวมเท่ากับหน้าประมาณการรถ) · จัดแล้ว = รถที่มี Shipping No. ซึ่ง Due เริ่มอยู่ในชั่วโมงนั้น · มี SN = Pallet+Rack ของชั่วโมงนั้นที่มี Shipping No. แล้ว · ออกแล้ว = เวลาออกจริง (ILMS / WMS)';
+  $('#planHint').textContent = notes.join(' · ') || 'Plan = รถที่ต้องใช้ (ปัดเป็นคันเต็ม ยอดรวม = ผลรวมทุกชั่วโมง รวมงานที่ส่งแล้ว จึงมากกว่าหน้าประมาณการรถที่นับเฉพาะงานค้าง) · จัดแล้ว = รถที่มี Shipping No. ซึ่ง Due เริ่มอยู่ในชั่วโมงนั้น · มี SN = Pallet+Rack ของชั่วโมงนั้นที่มี Shipping No. แล้ว · ออกแล้ว = เวลาออกจริง (ILMS / WMS)';
 
   // chart: bars = trucks needed (Plan), line = trucks with a Shipping No., dots = trucks that left
   const now = new Date();
@@ -711,6 +722,7 @@ function renderPlan(all, scope, trips) {
   const ticks = [...new Set([0, Math.ceil(vmax / 2), vmax])];
   const cx = (i) => P.l + step * i + step / 2;
   const line = list.map((h, i) => `${i ? 'L' : 'M'}${cx(i).toFixed(1)},${y(sum(h, (c) => c.sn.size)).toFixed(1)}`).join('');
+  const keepX = ($('#planChart .plan-scroll') || {}).scrollLeft || 0;
   $('#planChart').innerHTML = `<div class="plan-legend"><span><i class="lg-bar"></i>รถตาม Plan (Est)</span><span><i class="lg-line"></i>จัดรถแล้ว (Shipping No.)</span><span><i class="lg-dot"></i>ออกแล้ว</span></div>
     <div class="plan-scroll"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="รถที่ต้องใช้รายชั่วโมง">
     ${ticks.map((v) => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${P.l - 6}" y="${y(v) + 4}" class="ax" text-anchor="end">${v}</text>`).join('')}
@@ -748,6 +760,10 @@ function renderPlan(all, scope, trips) {
       const c = list.reduce((a, h) => { const x = h.wh[w]; a.n += x.n; a.est += x.est; a.p += x.p; a.r += x.r; a.open += x.open; a.hasSn += x.hasSn; a.sn += x.sn.size; a.left += x.left.size; return a; }, { n: 0, est: 0, p: 0, r: 0, open: 0, hasSn: 0, sn: 0, left: 0 });
       return `<td class="n">${c.n} คัน<div class="est-u">${f1(c.est)}</div></td><td class="n">${c.p} / ${c.r}${c.open ? `<div class="est-u">ค้าง ${c.open}</div>` : ''}</td><td class="n">${c.sn} คัน<div class="est-u">มี SN ${c.hasSn}/${c.p + c.r}</div></td><td class="n">${c.left}</td>`;
     }).join('')}${many ? `<td class="n">${tot.n} คัน</td>` : ''}<td></td></tr></tfoot>`;
+  const sc = $('#planChart .plan-scroll'); if (sc && keepX) sc.scrollLeft = keepX;
+  // second header row sticks right under the first one (measured, not guessed)
+  const h1 = $('#tblPlan thead tr');
+  if (h1 && h1.offsetHeight) $$('#tblPlan thead tr:nth-child(2) th').forEach((th) => { th.style.top = h1.offsetHeight + 'px'; });
 }
 
 // Ship-date mode: the rows of a day/shift's trucks can carry a due on another day (sent early, or old backlog).
