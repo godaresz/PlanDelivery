@@ -112,17 +112,52 @@ async function saveChunked(prefix, payload, meta) {
   const old = await getDoc(prefix + '_meta');
   const version = Date.now() * 1000 + Math.floor(Math.random() * 1000); // unique even for saves in the same ms
   const cid = 'v' + version.toString(36);
-  const m = { ...meta, chunks: parts.length, cid, version, updatedAt: new Date().toISOString() };
+  const m = { ...meta, chunks: parts.length, cid, version, updatedAt: meta.updatedAt || new Date().toISOString() };
   await writeDocs(parts.map((p, i) => [`${prefix}_${cid}_c${i}`, { v: version, data: p }]), []);
   await writeDocs([[prefix + '_meta', m]], []);
   await writeDocs([], chunkIds(prefix, old));
 }
 
+// Persistent cache in this browser (IndexedDB): a payload whose meta.version did not change since the last visit is
+// taken from the cache, so opening the app reads only the small meta docs (saves Spark reads + download volume).
 const cache = {};
+let idbP = null;
+function idb() {
+  if (isDemo || typeof indexedDB === 'undefined') return Promise.resolve(null);
+  if (!idbP) idbP = new Promise((res) => {
+    try {
+      const rq = indexedDB.open('shipcheck-cache', 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore('c');
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => res(null);
+    } catch { res(null); }
+  });
+  return idbP;
+}
+async function idbReq(mode, fn) {
+  const d = await idb();
+  if (!d) return null;
+  return new Promise((res) => {
+    try {
+      const rq = fn(d.transaction('c', mode).objectStore('c'));
+      rq.onsuccess = () => res(rq.result ?? null);
+      rq.onerror = () => res(null);
+    } catch { res(null); }
+  });
+}
+const idbGet = (k) => idbReq('readonly', (st) => st.get(k));
+const idbPut = (k, v) => idbReq('readwrite', (st) => st.put(v, k));
+const idbDel = (k) => idbReq('readwrite', (st) => st.delete(k));
+
 async function loadChunked(prefix, tries = 3) {
   const meta = await getDoc(prefix + '_meta');
   if (!meta) return { meta: null, data: null };
   if (cache[prefix] && cache[prefix].version === meta.version) return { meta, data: cache[prefix].data };
+  const saved = await idbGet(prefix);
+  if (saved && saved.version === meta.version) {
+    cache[prefix] = { version: meta.version, data: saved.data };
+    return { meta, data: saved.data };
+  }
   let json = '';
   for (const id of chunkIds(prefix, meta)) {
     const c = await getDoc(id);
@@ -134,6 +169,7 @@ async function loadChunked(prefix, tries = 3) {
   }
   const data = json ? JSON.parse(json) : null;
   cache[prefix] = { version: meta.version, data };
+  idbPut(prefix, { version: meta.version, data, at: Date.now() }); // not awaited: a failed cache write only costs a re-read
   return { meta, data };
 }
 
@@ -184,7 +220,7 @@ export async function deleteArchiveDays(list, index) {
     const id = archId(wh, day);
     const meta = await getDoc(id + '_meta');
     await writeDocs([], [...chunkIds(id, meta), id + '_meta']);
-    delete cache[id];
+    delete cache[id]; idbDel(id);
     if (index[wh]) delete index[wh][day];
     await mergeDoc('arch_index', { [wh]: { [day]: null } });
   }

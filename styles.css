@@ -401,3 +401,27 @@ body.anim .tbl.plan td.plan-bar span { transform-origin: left; animation: growX 
 .range-warn { font-size: 12.5px; font-weight: 600; color: #B91C1C; background: #FEF2F2; border: 1px solid #FCA5A5;
   border-radius: 8px; padding: 6px 10px; animation: fadeIn .25s ease; }
 .dt-wrap.bad .dt-show { border-color: #EF4444; box-shadow: 0 0 0 3px #FEE2E2; }
+.banner.stale { background: #FFF7ED; border-color: #FDBA74; color: #9A3412; flex-direction: column; align-items: flex-start; gap: 4px; }
+.banner.stale a { color: #C2410C; font-weight: 600; }
+.pd-wh { font-size: 14.5px; margin: 14px 0 8px; display: flex; gap: 10px; align-items: baseline; }
+.pd-wh:first-child { margin-top: 0; }
+.tbl.plan-dock th small { display: block; font-weight: 400; opacity: .7; font-size: 10.5px; }
+.tbl.plan-dock th.cur { background: #B45309; }
+.tbl.plan-dock td.grp { white-space: normal; min-width: 200px; max-width: 320px; }
+.tbl.plan-dock td.pd-c b { color: #1E3A8A; font-size: 14px; }
+.tbl.plan-dock td, .tbl.plan-dock th { text-align: center; }
+.tbl.plan-dock td.grp, .tbl.plan-dock th:first-child { text-align: left; }
+
+/* TV mode (big screen at the dock) */
+.tv-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; align-items: center; gap: 12px; padding: 8px 16px;
+  background: rgba(15,23,42,.92); color: #fff; font-size: 15px; backdrop-filter: blur(6px); }
+.tv-bar #tvPage { font-weight: 600; white-space: nowrap; }
+.tv-prog { flex: 1; height: 6px; border-radius: 99px; background: rgba(255,255,255,.18); overflow: hidden; }
+.tv-prog span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #2563EB, #7C3AED); transition: width 1s linear; }
+.tv-bar .btn { background: rgba(255,255,255,.1); color: #fff; border-color: rgba(255,255,255,.25); }
+body.tv #filterBar, body.tv #archBanner, body.tv .admin-only, body.tv #btnLogin, body.tv #btnPlanXlsx, body.tv #btnEstXlsx,
+body.tv .nav a[data-page="data"], body.tv .nav a[data-page="detail"] { display: none !important; }
+body.tv main { max-width: none; zoom: 1.18; padding-bottom: 70px; }
+body.tv .kpi .val { font-size: 38px; }
+body.tv .top { padding: 8px 20px; }
+body.tv .clock { font-size: 22px; }

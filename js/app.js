@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -8,7 +8,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const WHS = ['WH1', 'WH4'];
 
 const DEFAULT_RULES = {
-  keepDays: 7,
+  keepDays: 7, staleWms: 2, staleIlms: 4,
   groups: [
     { docks: ['S0', 'S2', 'S7', 'S9'], map: [{ orig: '07:30', slide: '08:30' }, { orig: '08:30', slide: '09:30' }] },
     { docks: ['S5', 'S6'], map: [{ orig: '07:30', slide: '09:30' }, { orig: '08:30', slide: '10:30' }] },
@@ -278,13 +278,30 @@ async function autoExportRun() {
 }
 
 // ---------- data ----------
+// before the DataSlide or the Dock rules change: stamp the due of every CONFIRMED row that has none yet with the
+// CURRENT slide + rules, so the change only affects rows that are not final. Saves a WH only if something was stamped.
+async function lockConfirmedDues() {
+  const latest = await store.loadAll();
+  const slide = slideMapOf(latest.slide && latest.slide.data);
+  const rules = (latest.rules && latest.rules.groups) || DEFAULT_RULES.groups;
+  for (const wh of WHS) {
+    const cur = latest[wh] && latest[wh].data;
+    if (cur && lockDues(cur, slide, rules)) {
+      const { chunks, cid, version, ...meta } = latest[wh].meta || {};
+      await store.saveWms(wh, cur, meta); // keeps the file's upload time (updatedAt)
+    }
+  }
+}
+function slideMapOf(sd) {
+  const m = new Map();
+  if (sd && sd.orders) sd.orders.forEach((o, i) => m.set(o, sd.dues[i]));
+  return m;
+}
 async function reload() {
   try {
     S.data = await store.loadAll();
     S.rules = S.data.rules && S.data.rules.groups ? S.data.rules : DEFAULT_RULES;
-    S.slideMap = new Map();
-    const sd = S.data.slide.data;
-    if (sd) sd.orders.forEach((o, i) => S.slideMap.set(o, sd.dues[i]));
+    S.slideMap = slideMapOf(S.data.slide.data);
     S.hist = S.data.truckhist.data || { WH1: {}, WH4: {} };
     S.ilmsMap = new Map((S.data.ilms.data || []).map((r) => [r.tp, { ...r, dt: fromKey(r.dt) }]));
     renderSources();
@@ -425,8 +442,30 @@ function render(quiet = false) {
   }
   try { renderAll(); } finally { if (animate) countUp(document.querySelector(`.page[data-page="${S.page}"]`) || document.body); }
 }
+// banner when the data is old (an upload was forgotten): statuses like "เลยกำหนด" would be based on an old file.
+// Admins also see a reminder when the truck history for Est is still in the old format (rebuild once).
+function renderStale() {
+  const now = Date.now(), msgs = [];
+  const age = (meta) => (meta && meta.updatedAt ? (now - new Date(meta.updatedAt).getTime()) / 3600000 : null);
+  const hrs = (h) => (h >= 48 ? `${Math.floor(h / 24)} วัน` : h >= 1 ? `${Math.floor(h)} ชม. ${Math.round((h % 1) * 60)} นาที` : `${Math.round(h * 60)} นาที`);
+  const lim = { wms: Number(S.rules.staleWms) || 2, ilms: Number(S.rules.staleIlms) || 4 };
+  for (const wh of WHS) {
+    const a = age(S.data[wh] && S.data[wh].meta);
+    if (a !== null && a > lim.wms) msgs.push(`WMS ${wh} อัปโหลดล่าสุด ${hrs(a)} ที่แล้ว`);
+  }
+  const ai = age(S.data.ilms && S.data.ilms.meta);
+  if (ai !== null && ai > lim.ilms) msgs.push(`ILMS อัปโหลดล่าสุด ${hrs(ai)} ที่แล้ว`);
+  const h = S.hist || {};
+  const oldHist = S.user && WHS.some((wh) => Object.values(h[wh] || {}).some((t) => t.v !== 2)) || (S.user && !h.links && Object.keys(h.WH1 || {}).length);
+  const b = $('#staleBanner');
+  b.hidden = !msgs.length && !oldHist;
+  if (b.hidden) return;
+  b.innerHTML = (msgs.length ? `<span>⏱ ข้อมูลอาจไม่เป็นปัจจุบัน: ${msgs.map(esc).join(' · ')} — สถานะเลยกำหนด/รอส่งคิดจากไฟล์ล่าสุดที่อัปโหลด</span>` : '')
+    + (oldHist ? `<span>📦 สรุปรถสำหรับประมาณการยังเป็นแบบเก่า — ไปหน้า <a href="#data">ข้อมูล &amp; กฎ</a> แล้วกด "สร้างสรุปรถใหม่จากประวัติทั้งหมด" 1 ครั้ง</span>` : '');
+}
 function renderAll() {
   S.models = new Map();
+  renderStale();
   const all = currentRows();
   const scope = S.wh === 'ALL' ? WHS : [S.wh];
   renderKpis(all, scope);
@@ -603,12 +642,17 @@ function renderTrips(list, rows) {
     $('#tripOther').innerHTML += `${other.length ? '<br>' : ''}นับรวมแล้ว: รถ <b>${noRows.length}</b> คันของกะนี้ที่ขนเฉพาะของ Due นอกช่วงนี้ (ส่งล่วงหน้า) — `
       + noRows.map((x) => `<a href="#" data-sn="${esc(x.sn)}">${esc(x.sn)}</a>`).join(', ');
   }
+  const mixed = list.filter((x) => x.info && [...x.wh].some((w) => w !== x.whOwn));
+  if (mixed.length) {
+    $('#tripOther').innerHTML += `${$('#tripOther').innerHTML ? '<br>' : ''}รถที่ขนของทั้ง WH1 และ WH4 <b>${mixed.length}</b> คัน (นับเป็นรถของ WH ตามหลักที่ 9 ของ Shipping No.) — `
+      + mixed.slice(0, 12).map((x) => `<a href="#" data-sn="${esc(x.sn)}">${esc(x.sn)}</a>`).join(', ') + (mixed.length > 12 ? ' …' : '');
+  }
   $$('#tripOther a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openTruck(a.dataset.sn); }));
   $('#tblTrip').innerHTML = `<thead><tr>${showWh ? '<th>WH</th>' : ''}<th>Shipping No.</th><th>กะ</th><th class="n">Trip</th>
       <th>Truck License</th><th>Dock</th><th>Window Name</th><th class="n">Pallet / Rack</th><th class="n">กล่อง</th>
       <th>Due เริ่ม – จบ</th><th>ออกจริง</th><th class="n">เทียบ Due เริ่ม</th><th>สถานะ</th></tr></thead>
     <tbody>${shown.map((x) => `<tr class="clickable" data-sn="${esc(x.sn)}">
-      ${showWh ? `<td>${x.whOwn}${[...x.wh].some((w) => w !== x.whOwn) ? `<div class="src-tag">มีของ ${[...x.wh].filter((w) => w !== x.whOwn).join(', ')}</div>` : ''}</td>` : ''}
+      ${showWh ? `<td>${x.whOwn}${mixTag(x)}</td>` : ''}
       <td class="t"><b>${esc(x.sn)}</b></td>
       <td>${x.info ? `${SHIFT_TH[x.info.shift]} <span class="src-tag">${fmtShow(x.info.date).slice(0, 5)}</span>` : '-'}</td>
       <td class="n">${x.info ? x.info.no : '-'}</td>
@@ -623,6 +667,13 @@ function renderTrips(list, rows) {
       || `<tr><td colspan="${cols}" class="hint">${anySn || !rows.length ? 'ไม่มีรถในช่วงเวลานี้'
         : 'ไฟล์ WMS ที่อัปโหลดไว้ยังไม่มีคอลัมน์ Shipping No. (AC) — อัปโหลดไฟล์ใหม่'}</td></tr>`}</tbody>`;
   $$('#tblTrip tr.clickable').forEach((tr) => tr.addEventListener('click', () => openTruck(tr.dataset.sn)));
+}
+// a truck that also carries the other warehouse's pallets: show the split (units = pallets + racks)
+function mixTag(x) {
+  const other = [...x.wh].filter((w) => w !== x.whOwn);
+  if (!other.length) return '';
+  const own = (x.whU[x.whOwn] || new Set()).size;
+  return `<div class="src-tag mix">ของ ${x.whOwn} ${own} · ${other.map((w) => `${w} ${(x.whU[w] || new Set()).size}`).join(' · ')} หน่วย</div>`;
 }
 function openTruck(sn) {
   S.search = sn; $('#fSearch').value = sn; S.win = null; S.status = 'ALL'; S.limit = 300; go('detail');
@@ -680,7 +731,7 @@ function renderPlan(all, scope, trips) {
     r1 = S.snShift === 'D' ? new Date(y, m - 1, d, 20, 0) : new Date(y, m - 1, d + 1, 7, 30);
   }
   if (r0 && r1) for (let t = new Date(r0.getFullYear(), r0.getMonth(), r0.getDate(), r0.getHours()); t < r1; t = new Date(t.getTime() + 3600000)) slot(hk(t), t);
-  const notes = [];
+  const notes = [], byGroup = {};
   for (const wh of scope) {
     const model = estModel(wh);
     if (!model.whMean) { notes.push(`${wh}: ยังไม่มีประวัติรถที่ Confirm แล้ว จึงยังประมาณการไม่ได้`); continue; }
@@ -688,12 +739,16 @@ function renderPlan(all, scope, trips) {
       const h = place(due);
       return { key: h.key };
     });
-    const cells = est.groups.flatMap((o) => [...o.cells.entries()]);
+    const cells = est.groups.flatMap((o, gi) => [...o.cells.entries()].map(([bk, x]) => [bk, x, gi]));
     const alloc = allocateWhole(cells.map(([, x]) => x.est));
-    cells.forEach(([bk, x], i) => {
+    const grp = est.groups.map((o) => ({ g: o.group, openDocks: o.openDocks, openWins: o.openWins, cells: new Map(), n: 0, est: 0 }));
+    cells.forEach(([bk, x, gi], i) => {
       const c = hours.get(bk).wh[wh];
       c.p += x.p.size; c.r += x.r.size; c.open += x.open; c.hasSn += x.hasSn; c.est += x.est; c.n += alloc.out[i];
+      const gc = { n: alloc.out[i], est: x.est, p: x.p.size, r: x.r.size, open: x.open };
+      grp[gi].cells.set(bk, gc); grp[gi].n += gc.n; grp[gi].est += gc.est;
     });
+    byGroup[wh] = grp;
   }
   for (const x of trips) {
     if (!scope.includes(x.whOwn)) continue;
@@ -769,11 +824,133 @@ function renderPlan(all, scope, trips) {
       const c = list.reduce((a, h) => { const x = h.wh[w]; a.n += x.n; a.est += x.est; a.p += x.p; a.r += x.r; a.open += x.open; a.hasSn += x.hasSn; a.sn += x.sn.size; a.left += x.left.size; return a; }, { n: 0, est: 0, p: 0, r: 0, open: 0, hasSn: 0, sn: 0, left: 0 });
       return `<td class="n">${c.n} คัน<div class="est-u">${f1(c.est)}</div></td><td class="n">${c.p} / ${c.r}${c.open ? `<div class="est-u">ค้าง ${c.open}</div>` : ''}</td><td class="n">${c.sn} คัน<div class="est-u">มี SN ${c.hasSn}/${c.p + c.r}</div></td><td class="n">${c.left}</td>`;
     }).join('')}${many ? `<td class="n">${tot.n} คัน</td>` : ''}<td></td></tr></tfoot>`;
+  renderPlanDock(list, scope, byGroup, hourLbl, dayLbl, now);
+  S.planExport = { list, scope, byGroup, hourLbl, dayLbl };
   const sc = $('#planChart .plan-scroll'); if (sc && keepX) sc.scrollLeft = keepX;
   // second header row sticks right under the first one (measured, not guessed)
   const h1 = $('#tblPlan thead tr');
   if (h1 && h1.offsetHeight) $$('#tblPlan thead tr:nth-child(2) th').forEach((th) => { th.style.top = h1.offsetHeight + 'px'; });
 }
+
+// ---------- Est accuracy history (back-test on the truck history, learning only from days before each shift) ----------
+async function computeAccuracy(days = 30) {
+  const btn = $('#btnAcc'); btn.disabled = true;
+  const now = new Date(), cut = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days);
+  const cutKey = ymd(cut).replace(/-/g, '');
+  const res = {};
+  try {
+    for (const wh of WHS) {
+      const liveAcc = truckAccAdd(truckAcc(), (S.view && S.view.full[wh]) || []), live = truckAccLinks(liveAcc);
+      const saved = (S.hist && S.hist.links && S.hist.links[wh]) || { parts: {}, sups: {} };
+      const links = { parts: { ...saved.parts, ...live.parts }, sups: { ...saved.sups, ...live.sups } };
+      const hist = mergeTruckHist((S.hist && S.hist[wh]) || {}, truckAccDone(liveAcc));
+      const skipped = new Set(learnLoadGroups(hist, links).skipped);
+      const shifts = new Map();
+      for (const [sn, t] of Object.entries(hist)) {
+        const info = parseTrip(sn);
+        if (!info || `WH${info.whDigit}` !== wh || info.end > now || !t.d || t.d < cutKey) continue; // finished shifts only
+        const k = t.d + t.s;
+        if (!shifts.has(k)) shifts.set(k, []);
+        shifts.get(k).push(t);
+      }
+      res[wh] = [];
+      const dates = [...new Set([...shifts.keys()].map((k) => k.slice(0, 8)))].sort();
+      for (const [i, d] of dates.entries()) {
+        btn.textContent = `กำลังคำนวณ ${wh} ${i + 1}/${dates.length}…`;
+        await new Promise((r) => setTimeout(r, 0));
+        const model = learnLoadGroups(Object.fromEntries(Object.entries(hist).filter(([, t]) => t.d && t.d < d)), links);
+        if (!model.whMean || model.trucks < 50) continue; // not enough history before this day
+        for (const sh of ['D', 'N']) {
+          const trucks = shifts.get(d + sh);
+          if (!trucks) continue;
+          res[wh].push({ d, s: sh, est: estimateHistTrucks(trucks, model), act: trucks.length, inc: skipped.has(d + sh) });
+        }
+      }
+    }
+    S.acc = res; renderAcc();
+  } catch (e) { toast('คำนวณไม่สำเร็จ: ' + e.message, true); }
+  finally { btn.disabled = false; btn.textContent = 'คำนวณใหม่'; }
+}
+function renderAcc() {
+  const el = $('#estAcc');
+  if (!S.acc) { el.innerHTML = '<p class="hint">กดปุ่มเพื่อคำนวณ — ใช้ประวัติรถที่ Confirm แล้ว 30 วันล่าสุด แต่ละกะเรียนรู้เฉพาะข้อมูลก่อนวันนั้น (เหมือนประมาณการล่วงหน้าจริง)</p>'; return; }
+  const col = (e) => (Math.abs(e) <= 10 ? '#10B981' : Math.abs(e) <= 20 ? '#F59E0B' : '#EF4444');
+  el.innerHTML = WHS.map((wh) => {
+    const rows = S.acc[wh] || [];
+    const ok = rows.filter((r) => !r.inc && r.act);
+    if (!ok.length) return `<h3 class="pd-wh">${wh}</h3><p class="hint">ยังมีประวัติไม่พอ</p>`;
+    const err = (r) => ((r.est - r.act) / r.act) * 100;
+    const mae = ok.reduce((a, r) => a + Math.abs(err(r)), 0) / ok.length;
+    const bias = ok.reduce((a, r) => a + err(r), 0) / ok.length;
+    const last7 = ok.slice(-14), mae7 = last7.reduce((a, r) => a + Math.abs(err(r)), 0) / last7.length;
+    const W = Math.max(($('#estAcc').clientWidth || 900) - 2, rows.length * 22), H = 150, mid = 75, sc = 60 / Math.max(30, ...rows.map((r) => Math.min(60, Math.abs(err(r)))));
+    const bars = rows.map((r, i) => {
+      const e = Math.max(-60, Math.min(60, err(r))), x = 34 + i * ((W - 44) / rows.length), bw = Math.max(6, (W - 44) / rows.length - 4);
+      const h = Math.abs(e) * sc, y = e >= 0 ? mid - h : mid;
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, h).toFixed(1)}" rx="2" fill="${r.inc ? '#D1D5DB' : col(e)}">
+        <title>${r.d.slice(6, 8)}/${r.d.slice(4, 6)} กะ${r.s === 'D' ? 'เช้า' : 'ดึก'}: Est ${f1(r.est)} · ใช้จริง ${r.act} คัน · ${e >= 0 ? '+' : ''}${e.toFixed(1)}%${r.inc ? ' (ข้อมูลไม่ครบ ไม่นับ)' : ''}</title></rect>
+        ${i % 4 === 0 ? `<text x="${(x + bw / 2).toFixed(1)}" y="${H - 4}" class="ax" text-anchor="middle">${r.d.slice(6, 8)}/${r.d.slice(4, 6)}</text>` : ''}`;
+    }).join('');
+    return `<h3 class="pd-wh">${wh} <span class="hint">${ok.length} กะ · คลาดเฉลี่ย <b style="color:${col(mae)}">${mae.toFixed(1)}%</b> ·
+        7 วันล่าสุด <b style="color:${col(mae7)}">${mae7.toFixed(1)}%</b> · ${bias >= 0 ? 'Est มากกว่าจริง' : 'Est น้อยกว่าจริง'} เฉลี่ย ${Math.abs(bias).toFixed(1)}%</span></h3>
+      <div class="plan-scroll plan-chart"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="ความคลาดเคลื่อน Est รายกะ ${wh}">
+        <line x1="34" x2="${W - 10}" y1="${mid}" y2="${mid}" class="grid"/>
+        <text x="28" y="${mid - 30 * sc + 4}" class="ax" text-anchor="end">+${Math.round(30)}%</text><text x="28" y="${mid + 4}" class="ax" text-anchor="end">0</text>
+        <text x="28" y="${mid + 30 * sc + 4}" class="ax" text-anchor="end">-30%</text>${bars}</svg></div>`;
+  }).join('') + '<p class="hint">แท่งขึ้น = Est มากกว่ารถที่ใช้จริง · แท่งลง = น้อยกว่า · เขียว ≤ 10% · ส้ม ≤ 20% · แดง > 20% · เทา = กะที่ข้อมูลไม่ครบ (ไม่นับ) · ชี้ที่แท่งเพื่อดูตัวเลข</p>';
+}
+
+const gchips = (arr, hl) => arr.map((x) => `<span class="gchip${hl && hl.has(x) ? ' on' : ''}">${esc(x)}</span>`).join('');
+// Plan by Dock group: rows = load groups (Dock + Window that ship together), columns = hours, cell = whole trucks
+function renderPlanDock(list, scope, byGroup, hourLbl, dayLbl, now) {
+  const hrs = list.filter((h) => scope.some((w) => (byGroup[w] || []).some((g) => g.cells.has(h.key))));
+  const html = scope.filter((w) => (byGroup[w] || []).length).map((wh) => {
+    const groups = byGroup[wh].filter((g) => g.n || g.est >= 0.05).sort((a, b) => b.n - a.n || b.est - a.est);
+    const maxN = Math.max(1, ...groups.flatMap((g) => [...g.cells.values()].map((c) => c.n)));
+    const colTot = hrs.map((h) => groups.reduce((a, g) => a + ((g.cells.get(h.key) || {}).n || 0), 0));
+    return `<h3 class="pd-wh">${wh} <span class="hint">${groups.length} กลุ่ม · รวม ${groups.reduce((a, g) => a + g.n, 0)} คัน</span></h3>
+      <div class="table-wrap short"><table class="tbl plan-dock"><thead><tr><th>กลุ่ม Dock · Window</th>
+      ${hrs.map((h) => `<th class="n${!h.before && now >= h.t && now < new Date(h.t.getTime() + 3600000) ? ' cur' : ''}">${h.before ? 'ก่อน' : String(h.t.getHours()).padStart(2, '0')}<small>${h.before ? '' : dayLbl(h)}</small></th>`).join('')}
+      <th class="n">รวม</th></tr></thead><tbody>
+      ${groups.map((g) => `<tr><td class="grp">${gchips(g.g.docks, g.openDocks)}<div class="gwin">${gchips(g.g.windows, g.openWins)}</div></td>
+        ${hrs.map((h) => { const c = g.cells.get(h.key); if (!c) return '<td class="n"><span class="z">-</span></td>';
+          return `<td class="n pd-c" style="background:rgba(191,219,254,${(0.12 + (c.n / maxN) * 0.88).toFixed(2)})" title="${dayLbl(h)} ${hourLbl(h)} · ${c.p}P ${c.r}R · ${f1(c.est)}"><b>${c.n}</b><div class="est-u">${c.p + c.r}</div></td>`; }).join('')}
+        <td class="n"><b>${g.n}</b> คัน<div class="est-u">${f1(g.est)}</div></td></tr>`).join('')}</tbody>
+      <tfoot><tr><td>รวม (คัน)</td>${colTot.map((v) => `<td class="n">${v}</td>`).join('')}<td class="n">${groups.reduce((a, g) => a + g.n, 0)}</td></tr></tfoot></table></div>`;
+  }).join('');
+  $('#planDock').innerHTML = html || '<p class="hint">ไม่มีงานในช่วงเวลานี้</p>';
+}
+function exportPlan() {
+  const x = S.planExport;
+  if (!x || !x.list.length) { toast('ไม่มีข้อมูลให้ Export', true); return; }
+  const rows = x.list.map((h) => {
+    const o = { 'วันที่': x.dayLbl(h), 'ช่วงเวลา': x.hourLbl(h) };
+    let tot = 0;
+    for (const w of x.scope) { const c = h.wh[w]; tot += c.n;
+      Object.assign(o, { [`${w} Plan (คัน)`]: c.n, [`${w} Est (ทศนิยม)`]: +c.est.toFixed(2), [`${w} Pallet`]: c.p, [`${w} Rack`]: c.r,
+        [`${w} ค้าง`]: c.open, [`${w} มี Shipping No.`]: c.hasSn, [`${w} จัดแล้ว (คัน)`]: c.sn.size, [`${w} ออกแล้ว (คัน)`]: c.left.size }); }
+    if (x.scope.length > 1) o['รวม Plan (คัน)'] = tot;
+    return o;
+  });
+  const dock = [];
+  for (const w of x.scope) for (const g of x.byGroup[w] || []) for (const h of x.list) {
+    const c = g.cells.get(h.key); if (!c) continue;
+    dock.push({ WH: w, Dock: g.g.docks.join(', '), 'Window Name': g.g.windows.join(', '), 'วันที่': x.dayLbl(h), 'ช่วงเวลา': x.hourLbl(h),
+      'รถ (คัน)': c.n, 'Est (ทศนิยม)': +c.est.toFixed(2), Pallet: c.p, Rack: c.r, 'ค้าง': c.open });
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Plan รายชั่วโมง');
+  if (dock.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dock), 'แยกตาม Dock');
+  XLSX.writeFile(wb, `PlanTruck_${stamp()}.xlsx`);
+}
+function exportEst() {
+  const x = S.estExport;
+  if (!x || !x.length) { toast('ไม่มีข้อมูลให้ Export', true); return; }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(x), 'Est');
+  XLSX.writeFile(wb, `EstTruck_${stamp()}.xlsx`);
+}
+function stamp() { const n = new Date(); return `${n.getFullYear()}${pad(n.getMonth() + 1)}${pad(n.getDate())}_${pad(n.getHours())}${pad(n.getMinutes())}`; }
 
 // Ship-date mode: the rows of a day/shift's trucks can carry a due on another day (sent early, or old backlog).
 // For the Est / Plan buckets such a row is placed inside its truck's shift: Shipping Time if that is in the shift,
@@ -807,6 +984,7 @@ function estModel(wh, beforeKey = '') {
 }
 function renderEst(all, scope) {
   const cmp = S.estMode === 'cmp';
+  S.estExport = [];
   $$('#estMode .tab').forEach((t) => t.classList.toggle('active', t.dataset.em === (cmp ? 'cmp' : 'open')));
   // compare mode learns only from trucks before the range, so the estimate is a fair prediction
   const startKey = (S.mode === 'sn' ? (S.snDate || '') : S.view.start ? ymd(S.view.start) : '').replace(/-/g, '');
@@ -842,6 +1020,14 @@ function renderEst(all, scope) {
     const cellList = est.groups.flatMap((o) => [...o.cells.values()]);
     const alloc = allocateWhole(cellList.map((x) => x.est));
     cellList.forEach((x, i) => { x.n = alloc.out[i]; });
+    const bmeta = new Map(est.buckets.map((b) => [b.key, b]));
+    for (const o of est.groups) for (const [bk, x] of o.cells) {
+      const bm = bmeta.get(bk);
+      S.estExport.push({ WH: wh, Dock: o.group.docks.join(', '), 'Window Name': o.group.windows.join(', '),
+        'วันที่ (Due)': fmtShow(new Date(bm.day + 'T00:00')).slice(0, 5), 'ช่วง': `${PNAME[bm.period][0]} ${PNAME[bm.period][1]}`,
+        'รถ Est (คัน)': x.n, 'Est (ทศนิยม)': +x.est.toFixed(2), Pallet: x.p.size, Rack: x.r.size, 'กล่อง': x.box,
+        ...(cmp ? { 'Est ส่วนที่ส่งแล้ว': +x.estS.toFixed(2), 'ใช้จริง (คัน)': +x.act.toFixed(2) } : {}) });
+    }
     const tot = new Map(est.buckets.map((b) => [b.key, { p: 0, r: 0, est: 0, n: 0, act: 0, estS: 0, trucks: new Set() }]));
     let whAct = 0, whEstS = 0; const whTrucksAct = new Set();
     for (const o of est.groups) for (const [bk, x] of o.cells) {
@@ -1016,6 +1202,7 @@ async function onUpload(e) {
     } else if (kind === 'slide') {
       toast('กำลังอ่านไฟล์ DataSlide…', false, 60000);
       const res = await parseSlideFile(file);
+      await lockConfirmedDues(); // confirmed rows keep the due they were confirmed with (stamped with the old slide)
       await store.saveSlide({ orders: res.orders, dues: res.dues },
         { fileName: file.name, count: res.orders.length, valid: res.validCount });
       toast(`อัปเดต DataSlide แล้ว: ${res.orders.length.toLocaleString()} Order (ล้างข้อมูลเดิมแล้ว)`);
@@ -1038,6 +1225,8 @@ async function onUpload(e) {
       const msgs = [];
       const index = latest.archIndex || { WH1: {}, WH4: {} };
       const hist = (latest.truckhist && latest.truckhist.data) || { WH1: {}, WH4: {} };
+      const slideNow = slideMapOf(latest.slide && latest.slide.data);
+      const rulesNow = (latest.rules && latest.rules.groups) || DEFAULT_RULES.groups;
       for (const wh of found) { // a warehouse missing from the file keeps its old data
         const oldRows = (latest[wh] && latest[wh].data) || [];
         // rows of this file that may already be archived: load those archive days to lock their keys
@@ -1048,6 +1237,8 @@ async function onUpload(e) {
           archived.get(r.k).push(r);
         }
         const m = mergeWms(oldRows, split[wh], keepDays, new Date(), archived);
+        // newly confirmed rows: lock the due used now (a later DataSlide / rule change won't move it)
+        lockDues(m.rows, slideNow, rulesNow); lockDues(m.toArchive, slideNow, rulesNow);
         if (m.toArchive.length) { // archive first: if the next write fails, the rows still exist in one place
           const byDay = new Map();
           for (const r of m.toArchive) { const d = archDay(r); if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push(r); }
@@ -1084,6 +1275,7 @@ let draft = null;
 function openRules() {
   draft = JSON.parse(JSON.stringify(S.rules));
   $('#keepDays').value = draft.keepDays || 7;
+  $('#staleWms').value = draft.staleWms || 2; $('#staleIlms').value = draft.staleIlms || 4;
   drawRules();
   $('#rulesErr').textContent = '';
   $('#dlgRules').showModal();
@@ -1146,6 +1338,14 @@ function bind() {
   });
   $$('#modeTabs .tab').forEach((t) => t.addEventListener('click', () => setMode(t.dataset.mode)));
   $$('#estMode .tab').forEach((t) => t.addEventListener('click', () => { S.estMode = t.dataset.em; render(); }));
+  $('#btnPlanXlsx').addEventListener('click', exportPlan);
+  $('#btnEstXlsx').addEventListener('click', exportEst);
+  $('#btnAcc').addEventListener('click', () => computeAccuracy(30));
+  $('#btnTv').addEventListener('click', () => (tv.on ? tvStop() : tvStart()));
+  $('#tvExit').addEventListener('click', tvStop);
+  $('#tvPause').addEventListener('click', () => { tv.paused = !tv.paused; tvDraw(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && tv.on) tvStop(); });
+  renderAcc();
   $('#fSnDate').addEventListener('change', (e) => { S.snDate = e.target.value; saveFilters(); render(); });
   $$('#snShift .chip').forEach((c) => c.addEventListener('click', () => { S.snShift = c.dataset.sh; drawMode(); saveFilters(); render(); }));
   $$('[data-snq]').forEach((c) => c.addEventListener('click', () => {
@@ -1221,9 +1421,46 @@ function bind() {
     draft.groups = draft.groups.filter((g) => g.type === 'shift' || g.map.length);
     draft.groups.forEach((g) => delete g.dir);
     draft.keepDays = Math.max(1, Math.min(60, Number($('#keepDays').value) || 7));
-    try { await store.saveRules(draft); $('#dlgRules').close(); toast('บันทึกกฎแล้ว'); await reload(); }
+    draft.staleWms = Math.max(1, Math.min(72, Number($('#staleWms').value) || 2));
+    draft.staleIlms = Math.max(1, Math.min(72, Number($('#staleIlms').value) || 4));
+    try { await lockConfirmedDues(); await store.saveRules(draft); $('#dlgRules').close(); toast('บันทึกกฎแล้ว'); await reload(); }
     catch (err) { $('#rulesErr').textContent = 'บันทึกไม่สำเร็จ: ' + err.message; }
   });
+}
+
+// ---------- TV mode: big screen at the dock, pages rotate, range follows the current shift ----------
+const TV_PAGES = ['overview', 'trucks', 'plan', 'window'];
+const TV_SEC = 30;
+const TV_NAME = { overview: 'ภาพรวม', trucks: 'สรุปรถ', plan: 'Plan รถรายชั่วโมง', window: 'สรุป Window' };
+const tv = { on: false, paused: false, left: TV_SEC, i: 0, timer: null };
+function tvShift() { const n = new Date(), m = n.getHours() * 60 + n.getMinutes(); return m >= 450 && m < 1200 ? 'D' : `N${m < 450 ? ymd(new Date(n.getTime() - 86400000)) : ymd(n)}`; }
+function tvStart() {
+  tv.on = true; tv.paused = false; tv.left = TV_SEC; tv.i = Math.max(0, TV_PAGES.indexOf(S.page));
+  document.body.classList.add('tv'); $('#tvBar').hidden = false;
+  if (S.mode !== 'due') { S.mode = 'due'; drawMode(); }
+  tv.shift = tvShift(); setRange('auto'); // current shift
+  go(TV_PAGES[tv.i]);
+  try { document.documentElement.requestFullscreen && document.documentElement.requestFullscreen().catch(() => {}); } catch { /* ignore */ }
+  clearInterval(tv.timer); tv.timer = setInterval(tvTick, 1000); tvDraw();
+}
+function tvStop() {
+  tv.on = false; clearInterval(tv.timer);
+  document.body.classList.remove('tv'); $('#tvBar').hidden = true;
+  try { if (document.fullscreenElement) document.exitFullscreen(); } catch { /* ignore */ }
+}
+function tvTick() {
+  if (tv.paused) return;
+  if (--tv.left <= 0) {
+    tv.left = TV_SEC; tv.i = (tv.i + 1) % TV_PAGES.length;
+    if (tvShift() !== tv.shift) { tv.shift = tvShift(); setRange('auto'); } // follow the shift change (07:30 / 20:00)
+    go(TV_PAGES[tv.i]);
+  }
+  tvDraw();
+}
+function tvDraw() {
+  $('#tvPage').textContent = `${TV_NAME[TV_PAGES[tv.i]] || ''} · ถัดไป ${TV_NAME[TV_PAGES[(tv.i + 1) % TV_PAGES.length]]} ใน ${tv.left} วินาที`;
+  $('#tvProg').style.width = `${((TV_SEC - tv.left) / TV_SEC) * 100}%`;
+  $('#tvPause').textContent = tv.paused ? '▶ เล่นต่อ' : '⏸ หยุด';
 }
 
 function tick() {
@@ -1243,6 +1480,7 @@ async function main() {
   await store.init();
   store.onAuth((u) => {
     S.user = u;
+    if (S.data) renderStale();
     document.body.classList.toggle('is-admin', !!u);
     $('#btnLogin').textContent = store.isDemo ? 'โหมดทดลอง' : u ? `ออกจากระบบ (${u.email})` : 'เข้าสู่ระบบ';
     $('#btnLogin').disabled = store.isDemo;
@@ -1254,5 +1492,6 @@ async function main() {
   window.addEventListener('hashchange', showPage);
   await reload();
   showPage();
+  if (/[?&]tv\b/.test(location.search)) tvStart();
 }
 main();

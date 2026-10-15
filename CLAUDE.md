@@ -40,6 +40,10 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    - Order NOT in DataSlide → Dock rule if Dock is in a group and WMS due time equals the rule's original time
      (slide time earlier than original = next day); otherwise WMS due.
    - Default Dock rules: S0,S2,S7,S9: 07:30→08:30, 08:30→09:30 · S5,S6: 07:30→09:30, 08:30→10:30 (editable in the app).
+   - **CONFIRMED rows keep the due they were confirmed with** (agreed 15/10/2026): `lockDues` stamps `du` (+ `dsrc`) on a
+     CONFIRMED row once — at the WMS upload that brings it, and for all unstamped confirmed rows just before a new
+     DataSlide upload or a Dock-rule save (stamped with the OLD slide/rules). `evaluate` uses `du` when present (source
+     shows "(ล็อก)"). Rows archived before this change have no stamp and still follow the current slide.
    - Second rule type "shift" (`{type:'shift', docks, shift}`, shift = signed minutes): pick Dock(s), press
      เร็วขึ้น/ช้าลง and type any hours + minutes; moves ANY WMS due. Time-map rules are checked first; shift
      applies only if no time-map rule matched.
@@ -106,6 +110,15 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    used (`hourBucket`); whole trucks per WH by largest remainder (adds up to ceil of the WH sum). Shown with: trucks whose
    Due start is in the hour (Shipping No., value labels on the chart line; table also shows pallets+racks that already have a Shipping No.) and trucks that left in the hour (ILMS/WMS departure, even outside the range).
    Backlog rows due before the start go to one "ค้างก่อนช่วง" row.
+
+13. **Other features**: stale-data banner (WMS older than `rules.staleWms` h = 2, ILMS older than `rules.staleIlms` h = 4;
+   admins also get a reminder while `truckhist` is still v1) · Excel export on Plan (hourly + by Dock group) and Est pages ·
+   Plan "แยกตามกลุ่ม Dock" table (group × hour, whole trucks from the same allocation) · Est accuracy history
+   (button; back-test of the last 30 days of finished shifts from `truckhist`, each day learning only from earlier days,
+   `estimateHistTrucks`) · TV mode (📺 button or `?tv` in the URL: hides filters, pages overview → trucks → plan → window
+   every 30 s, range follows the current shift, Esc exits) · truck page shows trucks carrying both WH's pallets with the split.
+   Browser cache: `loadChunked` keeps payloads in IndexedDB (`shipcheck-cache`) and reuses them while meta.version is
+   unchanged, so a visit reads only the meta docs unless data changed.
 
 ## UI colours (user's standard palette)
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED

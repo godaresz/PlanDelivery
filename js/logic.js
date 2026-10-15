@@ -1,5 +1,5 @@
 // Status logic: effective due, shipped / scanned / overdue / pending
-import { fromKey, isAllZero } from './parse.js';
+import { fromKey, fmtKey, isAllZero } from './parse.js';
 
 export const ST = { OVERDUE: 'overdue', PENDING: 'pending', DONE_ON: 'done_on', DONE_LATE: 'done_late' };
 
@@ -34,17 +34,34 @@ function ruleDue(row, wmsDue, rules) {
 }
 
 // returns enriched rows
+// due used from the current DataSlide / Dock rules
+function dueOf(r, slideMap, rules) {
+  const wmsDue = fromKey(r.dd);
+  if (slideMap.has(r.o)) {
+    const sd = slideMap.get(r.o);
+    return sd ? { due: fromKey(sd), src: 'Slide' } : { due: wmsDue, src: 'Slide→WMS' };
+  }
+  const rd = ruleDue(r, wmsDue, rules);
+  return rd ? { due: rd, src: 'Rule' } : { due: wmsDue, src: 'WMS' };
+}
+// CONFIRMED rows keep the due used at the time they were confirmed: stamp r.du / r.dsrc once (never changed later),
+// so a later DataSlide / rule change does not move the due (and on-time / late) of shipments that are already final.
+// Returns the number of rows stamped.
+export function lockDues(rows, slideMap, rules) {
+  let n = 0;
+  for (const r of rows) {
+    if (r.cf !== 1 || r.du) continue;
+    const { due, src } = dueOf(r, slideMap, rules);
+    if (!due) continue;
+    r.du = fmtKey(due); r.dsrc = src; n++;
+  }
+  return n;
+}
+
 export function evaluate(rows, slideMap, rules, now) {
   return rows.map((r) => {
     const wmsDue = fromKey(r.dd);
-    let due = wmsDue, src = 'WMS';
-    if (slideMap.has(r.o)) {
-      const sd = slideMap.get(r.o);
-      if (sd) { due = fromKey(sd); src = 'Slide'; } else { src = 'Slide→WMS'; }
-    } else {
-      const rd = ruleDue(r, wmsDue, rules);
-      if (rd) { due = rd; src = 'Rule'; }
-    }
+    let { due, src } = r.du ? { due: fromKey(r.du), src: `${r.dsrc || 'WMS'} (ล็อก)` } : dueOf(r, slideMap, rules);
     const done = isComplete(r);
     const shipT = fromKey(r.sh);
     const scanned = !done && !!shipT;
@@ -126,7 +143,7 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
     if (!r.sn) continue;
     if (!g.has(r.sn)) {
       g.set(r.sn, { sn: r.sn, info: parseTrip(r.sn), wh: new Set(), trucks: new Set(), wins: new Set(), docks: new Set(),
-        p: new Set(), r: new Set(), box: 0, rows: 0, done: 0, lateRows: 0, maxLate: 0,
+        p: new Set(), r: new Set(), whU: {}, box: 0, rows: 0, done: 0, lateRows: 0, maxLate: 0,
         dueStart: null, dueEnd: null, wmsFirst: null, wmsLast: null });
     }
     const x = g.get(r.sn);
@@ -135,6 +152,7 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
     if (r.w) x.wins.add(r.w);
     if (r.d) x.docks.add(r.d);
     (r.rk ? x.r : x.p).add(r.pl || r.k);
+    if (r.wh) (x.whU[r.wh] = x.whU[r.wh] || new Set()).add(r.pl || r.k); // pallets + racks per warehouse
     x.box += r.bx; x.rows++;
     if (r.done) x.done++;
     if (r.st === ST.DONE_LATE) { x.lateRows++; x.maxLate = Math.max(x.maxLate, r.lateMin || 0); }
@@ -391,6 +409,22 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
 
 // whole trucks: total = ceil(sum of decimals); each cell gets floor(decimal), the remaining trucks go to the largest
 // remainders, so cells add up exactly to the total (largest remainder method)
+// Est for trucks already in the history (back-test): each Dock|Window node of each truck adds its pallets (racks ×
+// rackFactor) ÷ the load of its group in the truck's shift (window name xDnn / xNnn first, like estimateTrucks).
+export function estimateHistTrucks(trucks, model) {
+  let est = 0;
+  for (const t of trucks) {
+    for (const [k, v0] of Object.entries(t.n || {})) {
+      const v = Array.isArray(v0) ? v0 : [v0 || 0, 0]; // first-version summaries: units only
+      const [d, w] = k.split('|');
+      const [g] = model.groupOf(d, w);
+      const ws = String(w || '')[1];
+      const cap = g.cap[ws === 'D' || ws === 'N' ? ws : t.s] || g.mean;
+      if (cap) est += (v[0] + v[1] * model.rackFactor) / cap;
+    }
+  }
+  return est;
+}
 export function allocateWhole(values) {
   const total = Math.ceil(values.reduce((a, v) => a + v, 0) - 1e-9);
   const out = values.map((v) => Math.floor(v + 1e-9));

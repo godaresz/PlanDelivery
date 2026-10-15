@@ -21,6 +21,7 @@
     <div class="top-right">
       <span id="clock" class="clock"></span>
       <span id="modeBadge" class="badge"></span>
+      <button id="btnTv" class="btn ghost" title="โหมดจอใหญ่ สำหรับเปิดค้างไว้หน้า Dock (เปลี่ยนหน้าอัตโนมัติ)">📺 จอใหญ่</button>
       <button id="btnLogin" class="btn ghost">เข้าสู่ระบบ</button>
     </div>
   </header>
@@ -37,6 +38,7 @@
 
   <main>
     <div id="archBanner" class="banner admin-only" hidden></div>
+    <div id="staleBanner" class="banner stale" hidden></div>
     <!-- filters (shared by the report pages) -->
     <section class="panel filters" id="filterBar">
       <div class="f-group">
@@ -138,6 +140,7 @@
       <section class="panel">
         <div class="panel-h">
           <h2>ประมาณการรถ (Est)</h2>
+          <button class="btn sm" id="btnEstXlsx">⇩ Export Excel</button>
           <div class="tabs" id="estMode">
             <button class="tab active" data-em="open">งานค้าง (ยังไม่ Shipping)</button>
             <button class="tab" data-em="cmp">เทียบ Est กับที่ใช้จริง</button>
@@ -149,6 +152,11 @@
         <p class="note" id="estNote"></p>
       </section>
       <div id="estBody"></div>
+      <section class="panel">
+        <div class="panel-h"><h2>ความแม่นของ Est ย้อนหลัง</h2><button class="btn sm" id="btnAcc">คำนวณ 30 วันล่าสุด</button>
+          <span class="hint">เทียบ Est กับจำนวนรถที่ใช้จริงของแต่ละกะ (ตาม Shipping No.)</span></div>
+        <div id="estAcc"></div>
+      </section>
     </div>
 
     <!-- page: hourly truck plan -->
@@ -156,6 +164,7 @@
       <section class="panel">
         <div class="panel-h">
           <h2>Plan รถรายชั่วโมง</h2>
+          <button class="btn sm" id="btnPlanXlsx">⇩ Export Excel</button>
           <span class="hint">จำนวนรถที่ต้องใช้ในแต่ละชั่วโมง ตาม Due ของงานทั้งหมดในช่วงที่เลือก (ส่งแล้ว + ยังไม่ส่ง) ·
             คำนวณแบบเดียวกับหน้าประมาณการรถ (กลุ่ม Dock + Window ที่ไปด้วยกัน และจำนวนพาเลทต่อคันจากประวัติ)</span>
         </div>
@@ -165,6 +174,10 @@
       <section class="panel">
         <div class="panel-h"><h2>รายชั่วโมง</h2><span class="hint" id="planHint"></span></div>
         <div class="table-wrap"><table class="tbl plan" id="tblPlan"></table></div>
+      </section>
+      <section class="panel">
+        <div class="panel-h"><h2>แยกตามกลุ่ม Dock</h2><span class="hint">แต่ละชั่วโมงต้องใช้รถของกลุ่ม Dock + Window ไหนกี่คัน (ตัวเลขเล็ก = Pallet + Rack) · สีเข้ม = รถมาก · Dock / Window สีเข้ม = มีงานค้าง</span></div>
+        <div id="planDock"></div>
       </section>
     </div>
 
@@ -241,6 +254,8 @@
         <button type="button" class="btn ghost" id="btnAddGroup">+ เพิ่มกลุ่ม เปลี่ยนเวลา</button>
         <button type="button" class="btn ghost" id="btnAddShift">+ เพิ่มกลุ่ม เลื่อนเร็ว/ช้า</button>
         <label class="inline">ย้ายรายการที่ส่งแล้วเข้าประวัติหลัง <input type="number" id="keepDays" min="1" max="60" value="7"> วัน (ไม่ลบ)</label>
+        <label class="inline">เตือนเมื่อไม่ได้อัปโหลด WMS เกิน <input type="number" id="staleWms" min="1" max="72" value="2"> ชม.</label>
+        <label class="inline">ILMS เกิน <input type="number" id="staleIlms" min="1" max="72" value="4"> ชม.</label>
       </div>
       <div class="err" id="rulesErr"></div>
       <div class="dlg-actions">
@@ -250,6 +265,8 @@
     </div>
   </dialog>
 
+  <div id="tvBar" class="tv-bar" hidden><span id="tvPage"></span><span class="tv-prog"><span id="tvProg"></span></span>
+    <button class="btn sm" id="tvPause">⏸ หยุด</button><button class="btn sm" id="tvExit">✕ ออก (Esc)</button></div>
   <div id="toast" class="toast" hidden></div>
 
   <script type="module" src="js/app.js"></script>
