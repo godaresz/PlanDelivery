@@ -58,7 +58,10 @@ function setRange(kind) {
   else if (kind === 'night') {
     const base = mins < 450 ? at(d, 0, 0, -1) : d; // before 07:30 -> night that started yesterday
     s = at(base, 20, 0); e = at(base, 7, 29, 1);
-  } else if (kind === 'today') { s = at(d, 0, 0); e = at(d, 23, 59); }
+  } else if (kind === 'today') { // whole working day = day + night shift: 07:30 – 07:29 next day
+    const base = mins < 450 ? at(d, 0, 0, -1) : d; // before 07:30 -> the working day that started yesterday
+    s = at(base, 7, 30); e = at(base, 7, 29, 1);
+  }
   else { // auto: current shift
     return setRange(mins >= 450 && mins < 1200 ? 'day' : 'night');
   }
