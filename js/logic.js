@@ -192,35 +192,47 @@ export const PERIODS = [['T', 'ตี', '00:00–05:59'], ['M', 'เช้า', 
 export const periodOf = (d) => PERIODS[Math.floor(d.getHours() / 6)][0];
 
 // ---------- truck history (compact summary kept for Est, independent of the archive) ----------
-// { sn: { s: 'D'|'N', d: 'YYYYMMDD', u: units on truck, n: { 'Dock|Window': units } } }, units = distinct Pallet No.
+// { sn: { v: 2, s: 'D'|'N', d: 'YYYYMMDD', p: pallets, r: racks,
+//         n: { 'Dock|Window': [pallets, racks] }, pt: { 'Dock|Window': [Part No.] }, sp: { 'Dock|Window': [Supplier] } } }
+// pallets / racks = distinct Pallet No. by type (RFID all zeros = Rack).
 export const shiftOfTime = (dt) => { const m = dt.getHours() * 60 + dt.getMinutes(); return m >= 450 && m < 1200 ? 'D' : 'N'; };
 export function truckSummaries(rows) {
   const tr = new Map();
   for (const r of rows) {
     if (!r.sn || !isComplete(r)) continue;
-    if (!tr.has(r.sn)) tr.set(r.sn, { all: new Set(), n: new Map() });
-    const t = tr.get(r.sn), k = `${r.d || '-'}|${r.w || '-'}`, p = r.pl || r.k;
-    t.all.add(p);
-    if (!t.n.has(k)) t.n.set(k, new Set());
-    t.n.get(k).add(p);
+    if (!tr.has(r.sn)) tr.set(r.sn, { P: new Set(), R: new Set(), n: new Map() });
+    const t = tr.get(r.sn), k = `${r.d || '-'}|${r.w || '-'}`, pl = r.pl || r.k;
+    (r.rk ? t.R : t.P).add(pl);
+    if (!t.n.has(k)) t.n.set(k, { P: new Set(), R: new Set(), parts: new Set(), sups: new Set() });
+    const x = t.n.get(k);
+    (r.rk ? x.R : x.P).add(pl);
+    if (r.p) x.parts.add(r.p);
+    if (r.s) x.sups.add(r.s);
   }
   const out = {};
   for (const [sn, t] of tr) {
     const m = /^(\d{8})\d([DN])/i.exec(sn);
-    out[sn] = { s: m ? m[2].toUpperCase() : '', d: m ? m[1] : '', u: t.all.size,
-      n: Object.fromEntries([...t.n].map(([k, v]) => [k, v.size])) };
+    const n = {}, pt = {}, sp = {};
+    for (const [k, x] of t.n) { n[k] = [x.P.size, x.R.size]; pt[k] = [...x.parts]; sp[k] = [...x.sups]; }
+    out[sn] = { v: 2, s: m ? m[2].toUpperCase() : '', d: m ? m[1] : '', p: t.P.size, r: t.R.size, n, pt, sp };
   }
   return out;
 }
-// merge summaries: a truck seen again keeps the larger count per Dock|Window (rows of one truck can arrive in parts)
+// merge summaries: a truck seen again keeps the larger counts (rows of one truck can arrive in parts);
+// summaries from the first version (no pallet / rack split) are replaced
 export function mergeTruckHist(old, add, keepDays = 365, now = new Date()) {
   const out = { ...old };
   for (const [sn, t] of Object.entries(add)) {
     const o = out[sn];
-    if (!o) { out[sn] = t; continue; }
-    const n = { ...o.n };
-    for (const [k, v] of Object.entries(t.n)) n[k] = Math.max(n[k] || 0, v);
-    out[sn] = { ...o, u: Math.max(o.u, t.u), n };
+    if (!o || o.v !== 2) { out[sn] = t; continue; }
+    const n = { ...o.n }, pt = { ...o.pt }, sp = { ...o.sp };
+    for (const [k, v] of Object.entries(t.n)) {
+      const a = n[k] || [0, 0];
+      n[k] = [Math.max(a[0], v[0]), Math.max(a[1], v[1])];
+      pt[k] = [...new Set([...(pt[k] || []), ...(t.pt[k] || [])])];
+      sp[k] = [...new Set([...(sp[k] || []), ...(t.sp[k] || [])])];
+    }
+    out[sn] = { ...o, p: Math.max(o.p, t.p), r: Math.max(o.r, t.r), n, pt, sp };
   }
   const c = new Date(now.getTime() - keepDays * 86400000);
   const cut = `${c.getFullYear()}${String(c.getMonth() + 1).padStart(2, '0')}${String(c.getDate()).padStart(2, '0')}`;
@@ -230,18 +242,29 @@ export function mergeTruckHist(old, add, keepDays = 365, now = new Date()) {
 
 // Load groups learned from truck history: node = Dock|Window. Two nodes are linked when they shared a truck at least
 // 2 times AND in >= 30% of the trucks of the less frequent one; connected nodes form a group ("ไปด้วยกัน").
-// Group load = mean units of trucks whose largest part belongs to the group, also split by shift (D / N);
-// fewer than 3 trucks -> fall back (shift -> group -> warehouse mean).
+// Space: a Rack takes `rackFactor` pallet places = (mean pallets on pallet-only trucks) / (mean racks on rack-only trucks).
+// Group load = mean pallet-equivalents of trucks whose largest part belongs to the group, by shift (D / N);
+// fewer than 3 trucks -> fall back (shift -> group -> warehouse).
+// Unknown Dock|Window -> group of the same Window, else of the Part No. / Supplier most often shipped with, else new.
 export const LINK_MIN = 2, LINK_SHARE = 0.3, MIN_TRUCKS = 3;
 export function learnLoadGroups(hist) {
+  const norm = (t) => (t.v === 2 ? t : { ...t, p: t.u || 0, r: 0, n: Object.fromEntries(Object.entries(t.n || {}).map(([k, v]) => [k, [v, 0]])), pt: {}, sp: {} });
   // skip shift-days whose average load is < 60% of the median shift-day (incomplete uploads, e.g. before Shipping No.)
   const byDay = new Map();
-  for (const t of Object.values(hist)) { const k = t.d + t.s; if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(t); }
-  const dayMean = [...byDay].map(([k, a]) => [k, a.reduce((x, t) => x + t.u, 0) / a.length]);
+  for (const t0 of Object.values(hist)) { const t = norm(t0); const k = t.d + t.s; if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(t); }
+  const dayMean = [...byDay].map(([k, a]) => [k, a.reduce((x, t) => x + t.p + t.r, 0) / a.length]);
   const sorted = dayMean.map((x) => x[1]).sort((a, b) => a - b);
   const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
   const skipped = sorted.length >= 3 ? dayMean.filter(([, m]) => m < 0.6 * median).map(([k]) => k) : [];
   const trucks = [...byDay].filter(([k]) => !skipped.includes(k)).flatMap(([, a]) => a);
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  // rack space factor from pure trucks
+  const pOnly = trucks.filter((t) => t.p > 0 && t.r <= 0.1 * (t.p + t.r)).map((t) => t.p);
+  const rOnly = trucks.filter((t) => t.r > 0 && t.p <= 0.1 * (t.p + t.r)).map((t) => t.r);
+  let rackFactor = pOnly.length >= MIN_TRUCKS && rOnly.length >= MIN_TRUCKS ? mean(pOnly) / mean(rOnly) : 1;
+  rackFactor = Math.min(2, Math.max(0.2, rackFactor));
+  const eq = (p, r) => p + r * rackFactor;
+
   const cnt = new Map(), pair = new Map();
   for (const t of trucks) {
     const ks = Object.keys(t.n).sort();
@@ -259,19 +282,26 @@ export function learnLoadGroups(hist) {
   const groups = new Map();
   for (const k of cnt.keys()) {
     const g = find(k);
-    if (!groups.has(g)) groups.set(g, { id: g, nodes: [], loads: [], D: [], N: [] });
+    if (!groups.has(g)) groups.set(g, { id: g, nodes: [], loads: [], D: [], N: [], P: 0, R: 0 });
     groups.get(g).nodes.push(k);
   }
   const all = { loads: [], D: [], N: [] };
+  const vote = { part: new Map(), sup: new Map() }; // Part No. / Supplier -> Map(group -> trucks)
+  const addVote = (m, key, g) => { if (!m.has(key)) m.set(key, new Map()); const x = m.get(key); x.set(g, (x.get(g) || 0) + 1); };
   for (const t of trucks) {
     const per = new Map();
-    for (const [k, v] of Object.entries(t.n)) { const g = find(k); per.set(g, (per.get(g) || 0) + v); }
+    for (const [k, v] of Object.entries(t.n)) {
+      const g = find(k); per.set(g, (per.get(g) || 0) + eq(v[0], v[1]));
+      groups.get(g).P += v[0]; groups.get(g).R += v[1];
+      (t.pt[k] || []).forEach((x) => addVote(vote.part, x, g));
+      (t.sp[k] || []).forEach((x) => addVote(vote.sup, x, g));
+    }
     if (!per.size) continue;
     const g = groups.get([...per].sort((a, b) => b[1] - a[1])[0][0]);
-    g.loads.push(t.u); all.loads.push(t.u);
-    if (t.s === 'D' || t.s === 'N') { g[t.s].push(t.u); all[t.s].push(t.u); }
+    const load = eq(t.p, t.r);
+    g.loads.push(load); all.loads.push(load);
+    if (t.s === 'D' || t.s === 'N') { g[t.s].push(load); all[t.s].push(load); }
   }
-  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
   const whMean = all.loads.length ? mean(all.loads) : null;
   const whShift = { D: all.D.length >= MIN_TRUCKS ? mean(all.D) : whMean, N: all.N.length >= MIN_TRUCKS ? mean(all.N) : whMean };
   for (const g of groups.values()) {
@@ -280,52 +310,71 @@ export function learnLoadGroups(hist) {
     g.n = g.loads.length;
     g.own = g.n >= MIN_TRUCKS;
     g.mean = g.own ? mean(g.loads) : whMean;
-    g.cap = { D: g[`D`].length >= MIN_TRUCKS ? mean(g.D) : g.own ? g.mean : whShift.D,
+    g.cap = { D: g.D.length >= MIN_TRUCKS ? mean(g.D) : g.own ? g.mean : whShift.D,
       N: g.N.length >= MIN_TRUCKS ? mean(g.N) : g.own ? g.mean : whShift.N };
   }
+  const best = (m, key) => { const x = m.get(key); return x ? [...x].sort((a, b) => b[1] - a[1])[0][0] : null; };
   const byWindow = new Map();
   for (const k of cnt.keys()) byWindow.set(k.split('|')[1], find(k));
-  const groupOf = (d, w) => {
+  const groupOf = (d, w, part, sup) => {
     const k = `${d || '-'}|${w || '-'}`;
-    if (par.has(k)) return groups.get(find(k));
-    if (byWindow.has(w || '-')) return groups.get(byWindow.get(w || '-'));
-    if (!groups.has(k)) groups.set(k, { id: k, nodes: [k], loads: [], D: [], N: [], docks: [d || '-'], windows: [w || '-'],
+    if (par.has(k)) return [groups.get(find(k)), 'Window'];
+    if (byWindow.has(w || '-')) return [groups.get(byWindow.get(w || '-')), 'Window'];
+    const gp = part && best(vote.part, part);
+    if (gp) return [groups.get(gp), 'Part'];
+    const gs = sup && best(vote.sup, sup);
+    if (gs) return [groups.get(gs), 'Supplier'];
+    if (!groups.has(k)) groups.set(k, { id: k, nodes: [k], loads: [], D: [], N: [], P: 0, R: 0, docks: [d || '-'], windows: [w || '-'],
       n: 0, own: false, mean: whMean, cap: whShift, isNew: true });
-    return groups.get(k);
+    return [groups.get(k), 'new'];
   };
   const days = trucks.map((t) => t.d).filter(Boolean).sort();
-  return { whMean, whShift, trucks: all.loads.length, groups, groupOf, from: days[0], to: days[days.length - 1], skipped };
+  return { whMean, whShift, rackFactor, trucks: all.loads.length, groups, groupOf, from: days[0], to: days[days.length - 1], skipped };
 }
 
-// open (not shipped) rows -> buckets by due day + period, per load group: units and estimated trucks.
-// Each pallet counts once: in the bucket of its earliest due and the group of its rows' Dock|Window (first seen).
+// open (not shipped) rows -> buckets by due day + period, per load group.
+// Each pallet counts once: in the bucket of its earliest due, the group of its first row (Dock|Window, Part, Supplier).
+// est = sum over pallets of (1 for a pallet, rackFactor for a rack) / group load in the shift of its due.
 export function estimateTrucks(openRows, model) {
   const pal = new Map();
   for (const r of openRows) {
     if (!r.due) continue;
     const k = r.pl || r.k;
     const x = pal.get(k);
-    if (!x) pal.set(k, { due: r.due, rk: r.rk, box: r.bx, d: r.d, w: r.w });
+    if (!x) pal.set(k, { due: r.due, rk: r.rk, box: r.bx, d: r.d, w: r.w, p: r.p, s: r.s });
     else { x.box += r.bx; if (r.due < x.due) x.due = r.due; }
   }
   const buckets = new Map(), rowsOut = new Map();
+  const via = { Window: 0, Part: 0, Supplier: 0, new: 0 };
   for (const [k, pl] of pal) {
     const day = `${pl.due.getFullYear()}-${String(pl.due.getMonth() + 1).padStart(2, '0')}-${String(pl.due.getDate()).padStart(2, '0')}`;
     const bk = `${day}|${'TMAE'.indexOf(periodOf(pl.due))}`;
     if (!buckets.has(bk)) buckets.set(bk, { key: bk, day, period: periodOf(pl.due) });
-    const g = model.groupOf(pl.d, pl.w);
-    if (!rowsOut.has(g.id)) rowsOut.set(g.id, { group: g, cells: new Map(), openDocks: new Set(), openWins: new Set() });
+    const [g, how] = model.groupOf(pl.d, pl.w, pl.p, pl.s);
+    via[how]++;
+    if (!rowsOut.has(g.id)) rowsOut.set(g.id, { group: g, cells: new Map(), openDocks: new Set(), openWins: new Set(), via: new Set() });
     const o = rowsOut.get(g.id);
-    o.openDocks.add(pl.d || '-'); o.openWins.add(pl.w || '-');
-    if (!o.cells.has(bk)) o.cells.set(bk, { p: new Set(), r: new Set(), box: 0 });
+    o.openDocks.add(pl.d || '-'); o.openWins.add(pl.w || '-'); if (how !== 'Window') o.via.add(how);
+    if (!o.cells.has(bk)) o.cells.set(bk, { p: new Set(), r: new Set(), box: 0, est: 0 });
     const x = o.cells.get(bk);
     (pl.rk ? x.r : x.p).add(k); x.box += pl.box;
-    const cap = g.cap[shiftOfTime(pl.due)] || g.mean; // load per truck of this group in the pallet's shift
-    x.est = (x.est || 0) + (cap ? 1 / cap : 0);
+    const cap = g.cap[shiftOfTime(pl.due)] || g.mean;
+    x.est += cap ? (pl.rk ? model.rackFactor : 1) / cap : 0;
   }
   for (const o of rowsOut.values()) for (const x of o.cells.values()) x.units = x.p.size + x.r.size;
   const list = [...rowsOut.values()].sort((a, b) => a.group.docks.join().localeCompare(b.group.docks.join()) || a.group.windows[0].localeCompare(b.group.windows[0]));
-  return { buckets: [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key)), groups: list };
+  return { buckets: [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key)), groups: list, via };
+}
+
+// whole trucks: total = ceil(sum of decimals); each cell gets floor(decimal), the remaining trucks go to the largest
+// remainders, so cells add up exactly to the total (largest remainder method)
+export function allocateWhole(values) {
+  const total = Math.ceil(values.reduce((a, v) => a + v, 0) - 1e-9);
+  const out = values.map((v) => Math.floor(v + 1e-9));
+  let left = total - out.reduce((a, v) => a + v, 0);
+  const order = values.map((v, i) => [v - Math.floor(v + 1e-9), i]).sort((a, b) => b[0] - a[0]);
+  for (let i = 0; i < order.length && left > 0; i++, left--) out[order[i][1]]++;
+  return { total, out };
 }
 
 // totals for a list of trucks

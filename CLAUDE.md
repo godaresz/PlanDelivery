@@ -70,13 +70,16 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Departure = ILMS Delivery Date if matched, else WMS (left once any row shipped). Late (ออกช้า) = departure after
    Due start (ILMS) / a row shipped after its due (WMS fallback). Remaining = not left; overdue = Due start passed.
 11. **Truck estimate (Est, page `#est`)**: open (not shipped) pallets in the current filter. Each pallet counts once
-   (bucket of its earliest due; Dock|Window of its first row). Buckets = due day × period ตี 00–05 / เช้า 06–11 /
-   บ่าย 12–17 / ทุ่ม 18–23. Learning uses the truck history (`truckhist`, all uploads incl. archived) + loaded rows.
-   Shift-days whose mean load is < 60% of the median shift-day are skipped (incomplete uploads).
-   Load groups ("ไปด้วยกัน"): Dock|Window nodes that shared a truck ≥ 2 times and in ≥ 30% of the less frequent
-   node's trucks are linked (connected groups). Group units/truck = mean load of trucks whose largest part is the
-   group, by shift D/N (< 3 trucks → group mean → WH shift mean). Each pallet adds 1 ÷ (its group's load in the shift
-   of its due); totals sum decimals and round up once. Back-test 12–14/10: within about ±10%.
+   (bucket of its earliest due; Dock|Window, Part No., Supplier of its first row). Buckets = due day × period ตี 00–05 /
+   เช้า 06–11 / บ่าย 12–17 / ทุ่ม 18–23. Learning uses the truck history (`truckhist` v2: pallets/racks per Dock|Window
+   + Part No. + Supplier per truck; all uploads incl. archived) + loaded rows. Shift-days whose mean load is < 60% of
+   the median shift-day are skipped (incomplete uploads).
+   - Load groups ("ไปด้วยกัน"): Dock|Window nodes that shared a truck ≥ 2 times and in ≥ 30% of the less frequent
+     node's trucks are linked. Unknown Dock|Window → group of the same Window → of the Part No. → of the Supplier.
+   - Rack space = rackFactor pallets (mean pallets on pallet-only trucks ÷ mean racks on rack-only trucks; ≈1.0 now).
+   - Group load per truck (pallet-equivalents) by shift D/N (< 3 trucks → group mean → WH shift mean).
+   - Each pallet adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = ceil(sum), shared out
+     to cells by largest remainder so cells add up to the total. Out-of-sample back-test 10–14/10: mean error ≈ 7%.
 
 ## UI colours (user's standard palette)
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED
