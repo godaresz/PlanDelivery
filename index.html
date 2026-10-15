@@ -254,8 +254,8 @@
         <button type="button" class="btn ghost" id="btnAddGroup">+ เพิ่มกลุ่ม เปลี่ยนเวลา</button>
         <button type="button" class="btn ghost" id="btnAddShift">+ เพิ่มกลุ่ม เลื่อนเร็ว/ช้า</button>
         <label class="inline">ย้ายรายการที่ส่งแล้วเข้าประวัติหลัง <input type="number" id="keepDays" min="1" max="60" value="7"> วัน (ไม่ลบ)</label>
-        <label class="inline">เตือนเมื่อไม่ได้อัปโหลด WMS เกิน <input type="number" id="staleWms" min="1" max="72" value="2"> ชม.</label>
-        <label class="inline">ILMS เกิน <input type="number" id="staleIlms" min="1" max="72" value="4"> ชม.</label>
+        <label class="inline">เตือนเมื่อไม่ได้อัปโหลด WMS เกิน <input type="number" id="staleWms" min="5" max="4320" step="5" value="30"> นาที</label>
+        <label class="inline">ILMS เกิน <input type="number" id="staleIlms" min="5" max="4320" step="5" value="30"> นาที</label>
       </div>
       <div class="err" id="rulesErr"></div>
       <div class="dlg-actions">

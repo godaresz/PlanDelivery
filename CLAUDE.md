@@ -111,7 +111,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Due start is in the hour (Shipping No., value labels on the chart line; table also shows pallets+racks that already have a Shipping No.) and trucks that left in the hour (ILMS/WMS departure, even outside the range).
    Backlog rows due before the start go to one "ค้างก่อนช่วง" row.
 
-13. **Other features**: stale-data banner (WMS older than `rules.staleWms` h = 2, ILMS older than `rules.staleIlms` h = 4;
+13. **Other features**: stale-data banner (WMS / ILMS upload older than `rules.staleWmsMin` / `rules.staleIlmsMin` minutes, default 30 each;
    admins also get a reminder while `truckhist` is still v1) · Excel export on Plan (hourly + by Dock group) and Est pages ·
    Plan "แยกตามกลุ่ม Dock" table (group × hour, whole trucks from the same allocation) · Est accuracy history
    (button; back-test of the last 30 days of finished shifts from `truckhist`, each day learning only from earlier days,

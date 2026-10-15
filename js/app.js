@@ -8,7 +8,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const WHS = ['WH1', 'WH4'];
 
 const DEFAULT_RULES = {
-  keepDays: 7, staleWms: 2, staleIlms: 4,
+  keepDays: 7, staleWmsMin: 30, staleIlmsMin: 30,
   groups: [
     { docks: ['S0', 'S2', 'S7', 'S9'], map: [{ orig: '07:30', slide: '08:30' }, { orig: '08:30', slide: '09:30' }] },
     { docks: ['S5', 'S6'], map: [{ orig: '07:30', slide: '09:30' }, { orig: '08:30', slide: '10:30' }] },
@@ -448,7 +448,7 @@ function renderStale() {
   const now = Date.now(), msgs = [];
   const age = (meta) => (meta && meta.updatedAt ? (now - new Date(meta.updatedAt).getTime()) / 3600000 : null);
   const hrs = (h) => (h >= 48 ? `${Math.floor(h / 24)} วัน` : h >= 1 ? `${Math.floor(h)} ชม. ${Math.round((h % 1) * 60)} นาที` : `${Math.round(h * 60)} นาที`);
-  const lim = { wms: Number(S.rules.staleWms) || 2, ilms: Number(S.rules.staleIlms) || 4 };
+  const lim = { wms: (Number(S.rules.staleWmsMin) || 30) / 60, ilms: (Number(S.rules.staleIlmsMin) || 30) / 60 }; // hours
   for (const wh of WHS) {
     const a = age(S.data[wh] && S.data[wh].meta);
     if (a !== null && a > lim.wms) msgs.push(`WMS ${wh} อัปโหลดล่าสุด ${hrs(a)} ที่แล้ว`);
@@ -1275,7 +1275,7 @@ let draft = null;
 function openRules() {
   draft = JSON.parse(JSON.stringify(S.rules));
   $('#keepDays').value = draft.keepDays || 7;
-  $('#staleWms').value = draft.staleWms || 2; $('#staleIlms').value = draft.staleIlms || 4;
+  $('#staleWms').value = draft.staleWmsMin || 30; $('#staleIlms').value = draft.staleIlmsMin || 30;
   drawRules();
   $('#rulesErr').textContent = '';
   $('#dlgRules').showModal();
@@ -1421,8 +1421,9 @@ function bind() {
     draft.groups = draft.groups.filter((g) => g.type === 'shift' || g.map.length);
     draft.groups.forEach((g) => delete g.dir);
     draft.keepDays = Math.max(1, Math.min(60, Number($('#keepDays').value) || 7));
-    draft.staleWms = Math.max(1, Math.min(72, Number($('#staleWms').value) || 2));
-    draft.staleIlms = Math.max(1, Math.min(72, Number($('#staleIlms').value) || 4));
+    draft.staleWmsMin = Math.max(5, Math.min(4320, Number($('#staleWms').value) || 30));
+    draft.staleIlmsMin = Math.max(5, Math.min(4320, Number($('#staleIlms').value) || 30));
+    delete draft.staleWms; delete draft.staleIlms;
     try { await lockConfirmedDues(); await store.saveRules(draft); $('#dlgRules').close(); toast('บันทึกกฎแล้ว'); await reload(); }
     catch (err) { $('#rulesErr').textContent = 'บันทึกไม่สำเร็จ: ' + err.message; }
   });
