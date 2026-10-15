@@ -186,6 +186,59 @@ export function mergeIlms(oldRows, newRows) {
   }
   return { rows: [...m.values()], skipped };
 }
+// ---------- truck estimate (Est) ----------
+// time-of-day periods (Thai): ตี 00–05, เช้า 06–11, บ่าย 12–17, ทุ่ม 18–23
+export const PERIODS = [['T', 'ตี', '00:00–05:59'], ['M', 'เช้า', '06:00–11:59'], ['A', 'บ่าย', '12:00–17:59'], ['E', 'ทุ่ม', '18:00–23:59']];
+export const periodOf = (d) => PERIODS[Math.floor(d.getHours() / 6)][0];
+
+// load per truck learned from shipped history: units = distinct Pallet No. (pallet + rack) on a truck.
+// A dock's capacity = mean units of trucks where that dock is >= 80% of the load (its "own" trucks);
+// docks with fewer than 3 such trucks use the warehouse mean of all trucks.
+export function truckCapacity(rows) {
+  const tr = new Map();
+  for (const r of rows) {
+    if (!r.sn || !isComplete(r)) continue;
+    if (!tr.has(r.sn)) tr.set(r.sn, new Map());
+    const t = tr.get(r.sn), d = r.d || '-';
+    if (!t.has(d)) t.set(d, new Set());
+    t.get(d).add(r.pl || r.k);
+  }
+  const loads = [], byDock = {};
+  for (const t of tr.values()) {
+    const all = new Set(); for (const s of t.values()) s.forEach((x) => all.add(x));
+    loads.push(all.size);
+    for (const [d, s] of t) if (s.size >= 0.8 * all.size) (byDock[d] = byDock[d] || []).push(all.size);
+  }
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  const all = loads.length ? mean(loads) : null;
+  const out = {};
+  for (const [d, a] of Object.entries(byDock)) out[d] = { mean: mean(a), n: a.length };
+  return { all, n: loads.length, dock: (d) => (out[d] && out[d].n >= 3 ? { ...out[d], own: true } : { mean: all, n: loads.length, own: false }) };
+}
+
+// open (not shipped) rows -> buckets by due day + period, per dock: units and estimated trucks
+export function estimateTrucks(openRows, cap) {
+  const buckets = new Map(), docks = new Map();
+  for (const r of openRows) {
+    if (!r.due) continue;
+    const day = `${r.due.getFullYear()}-${String(r.due.getMonth() + 1).padStart(2, '0')}-${String(r.due.getDate()).padStart(2, '0')}`;
+    const bk = `${day}|${'TMAE'.indexOf(periodOf(r.due))}`;
+    if (!buckets.has(bk)) buckets.set(bk, { key: bk, day, period: periodOf(r.due) });
+    const d = r.d || '-';
+    if (!docks.has(d)) docks.set(d, { dock: d, cap: cap.dock(d), cells: new Map() });
+    const c = docks.get(d).cells;
+    if (!c.has(bk)) c.set(bk, { p: new Set(), r: new Set(), box: 0 });
+    const x = c.get(bk);
+    (r.rk ? x.r : x.p).add(r.pl || r.k); x.box += r.bx;
+  }
+  for (const dk of docks.values()) for (const x of dk.cells.values()) {
+    x.units = x.p.size + x.r.size;
+    x.est = dk.cap.mean ? x.units / dk.cap.mean : null;
+  }
+  return { buckets: [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key)),
+    docks: [...docks.values()].sort((a, b) => a.dock.localeCompare(b.dock)) };
+}
+
 // totals for a list of trucks
 export function tripTotals(list) {
   const left = list.filter((x) => x.left);

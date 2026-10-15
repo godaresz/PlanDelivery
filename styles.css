@@ -219,3 +219,13 @@ input[type=date] { font: inherit; padding: 6px 8px; border: 1px solid var(--line
 .banner .btn { margin-left: auto; }
 .btn.sm { padding: 4px 10px; font-size: 12.5px; }
 .btn.danger { background: #FEF2F2; border-color: #FCA5A5; color: #B91C1C; }
+.est-tiles { grid-template-columns: repeat(6, 1fr); margin-bottom: 10px; }
+.tbl.est th.est-h { text-align: center; } .tbl.est th small, .tbl.est th b { display: block; }
+.tbl.est th small { font-weight: 400; opacity: .75; font-size: 11px; }
+.tbl.est td.est-c { text-align: center; }
+.est-v { font-weight: 700; font-size: 14px; color: #1E3A8A; }
+.est-u { font-size: 11px; color: var(--ink-2); font-weight: 400; }
+.tbl.est tfoot tr.sub td { font-weight: 500; background: #F9FAFB; color: var(--ink-2); bottom: auto; position: static; }
+@media (max-width: 900px) { .est-tiles { grid-template-columns: repeat(2, 1fr); } }
+.tbl.est th:first-child, .tbl.est td:first-child { width: 150px; white-space: nowrap; }
+.tbl.est th:nth-child(2), .tbl.est td:nth-child(2) { width: 110px; }

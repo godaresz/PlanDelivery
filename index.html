@@ -29,6 +29,7 @@
     <a href="#overview" data-page="overview"><span class="ic">▦</span>ภาพรวม</a>
     <a href="#window" data-page="window"><span class="ic">☰</span>สรุป Window<b class="cnt" id="cntWin"></b></a>
     <a href="#trucks" data-page="trucks"><span class="ic">⛟</span>สรุปรถ<b class="cnt" id="cntTruck"></b></a>
+    <a href="#est" data-page="est"><span class="ic">∑</span>ประมาณการรถ<b class="cnt" id="cntEst"></b></a>
     <a href="#detail" data-page="detail"><span class="ic">≡</span>รายละเอียด<b class="cnt" id="cntDetail"></b></a>
     <a href="#data" data-page="data"><span class="ic">⇪</span>ข้อมูล &amp; กฎ</a>
   </nav>
@@ -128,6 +129,20 @@
         </div>
         <div class="table-wrap"><table id="tblTrip" class="tbl"></table></div>
       </section>
+    </div>
+
+    <!-- page: truck estimate -->
+    <div class="page" data-page="est">
+      <section class="panel">
+        <div class="panel-h">
+          <h2>ประมาณการรถ (Est) — งานที่ยังไม่ Shipping</h2>
+          <span class="hint">งานค้าง = รายการในช่วงที่เลือกที่ยังไม่ส่ง · แยกตาม Dock และช่วงเวลาของ Due ·
+            ตี 00:00–05:59 · เช้า 06:00–11:59 · บ่าย 12:00–17:59 · ทุ่ม 18:00–23:59</span>
+        </div>
+        <div id="estTiles" class="kpi-row est-tiles"></div>
+        <p class="note" id="estNote"></p>
+      </section>
+      <div id="estBody"></div>
     </div>
 
     <!-- page: detail -->

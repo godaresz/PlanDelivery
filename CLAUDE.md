@@ -21,7 +21,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
   Viewers load the archive only for the days being viewed (±1 day).
   Payloads are JSON split into ≤700k-char chunk docs so a page load is ~10 reads. Viewers watch only the meta docs.
 - `js/app.js` — UI (Thai labels), uploads, filters, rules dialog, Excel export.
-  Pages via URL hash: `#overview`, `#window`, `#trucks`, `#detail`, `#data` (uploads + rules). Filter bar is shared.
+  Pages via URL hash: `#overview`, `#window`, `#trucks`, `#est`, `#detail`, `#data` (uploads + rules). Filter bar is shared.
 
 ## Business rules (agreed with the user — do not change without asking)
 1. **Due used**
@@ -67,6 +67,11 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    numbers kept; uploads merge by Truckplan No (newer wins unless the stored truck is `COMPLETE` = locked), never deleted.
    Departure = ILMS Delivery Date if matched, else WMS (left once any row shipped). Late (ออกช้า) = departure after
    Due start (ILMS) / a row shipped after its due (WMS fallback). Remaining = not left; overdue = Due start passed.
+11. **Truck estimate (Est, page `#est`)**: open (not shipped) rows in the current filter, grouped by Dock × (due day +
+   period ตี 00–05 / เช้า 06–11 / บ่าย 12–17 / ทุ่ม 18–23). Units = distinct Pallet No. (pallet + rack).
+   Units per truck per Dock = mean load of shipped trucks in the database where that Dock is ≥ 80% of the truck;
+   fewer than 3 such trucks → warehouse mean. Est = units ÷ units per truck; per period total = ceil(sum)
+   (docks share trucks), also shown as one-truck-per-dock (sum of ceils).
 
 ## UI colours (user's standard palette)
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED

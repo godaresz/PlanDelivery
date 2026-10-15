@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, ST } from './logic.js';
+import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, truckCapacity, estimateTrucks, PERIODS, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -353,11 +353,13 @@ function render() {
   renderWindows(rows, trips);
   renderTrips(trips, rows);
   renderOverview(rows, trips);
+  const estTotal = renderEst(all, scope);
   renderDetail(rows);
   const badge = (id, n, cls = '') => { const el = $(id); el.textContent = n || ''; el.className = 'cnt ' + cls; };
   badge('#cntWin', byWindow(rows).filter((x) => x.od.p.size + x.od.r.size > 0).length, 'red');
   badge('#cntTruck', trips.filter((x) => !x.left).length, trips.some((x) => x.od) ? 'red' : '');
   badge('#cntDetail', rows.filter((x) => !x.done).length);
+  badge('#cntEst', estTotal);
 }
 
 function kpiCalc(rows) {
@@ -560,8 +562,68 @@ function renderOverview(rows, trips) {
   $$('#ovTruck tr.clickable').forEach((tr) => tr.addEventListener('click', () => openTruck(tr.dataset.sn)));
 }
 
+// ---------- truck estimate page ----------
+const PNAME = Object.fromEntries(PERIODS.map(([k, n, t]) => [k, [n, t]]));
+const f1 = (v) => (v === null || v === undefined ? '-' : v.toFixed(1));
+function renderEst(all, scope) {
+  let totalTrucks = 0, totalP = 0, totalR = 0, totalBox = 0;
+  const perPeriod = { T: 0, M: 0, A: 0, E: 0 };
+  const notes = [];
+  const html = scope.map((wh) => {
+    const cap = truckCapacity(S.view.full[wh]);
+    const open = all[wh].filter((r) => !r.done);
+    const est = estimateTrucks(open, cap);
+    if (!est.docks.length) return `<section class="panel"><div class="panel-h"><h2>${wh}</h2></div><p class="hint">ไม่มีงานค้างในช่วงเวลานี้</p></section>`;
+    notes.push(`${wh}: เฉลี่ย ${f1(cap.all)} หน่วย/คัน จากประวัติ ${cap.n} คัน`);
+    // per bucket totals: shared trucks (ceil of the sum) and one-truck-per-dock (sum of ceils)
+    const tot = new Map(est.buckets.map((b) => [b.key, { units: 0, p: 0, r: 0, est: 0, perDock: 0 }]));
+    for (const dk of est.docks) for (const [bk, x] of dk.cells) {
+      const t = tot.get(bk); t.units += x.units; t.p += x.p.size; t.r += x.r.size; t.est += x.est || 0; t.perDock += Math.ceil(x.est || 0);
+      totalP += x.p.size; totalR += x.r.size; totalBox += x.box;
+    }
+    let whTrucks = 0;
+    for (const b of est.buckets) { const n = Math.ceil(tot.get(b.key).est - 1e-9); whTrucks += n; perPeriod[b.period] += n; }
+    totalTrucks += whTrucks;
+    const maxEst = Math.max(...est.docks.flatMap((dk) => [...dk.cells.values()].map((x) => x.est || 0)), 1);
+    const head = est.buckets.map((b) => `<th class="n est-h">${fmtShow(new Date(b.day + 'T00:00')).slice(0, 5)} <b>${PNAME[b.period][0]}</b><small>${PNAME[b.period][1]}</small></th>`).join('');
+    const body = est.docks.map((dk) => {
+      let du = 0, de = 0;
+      const cells = est.buckets.map((b) => {
+        const x = dk.cells.get(b.key);
+        if (!x) return '<td class="n"><span class="z">-</span></td>';
+        du += x.units; de += x.est || 0;
+        const a = Math.min(1, (x.est || 0) / maxEst);
+        return `<td class="n est-c" style="background:rgba(191,219,254,${(0.15 + a * 0.85).toFixed(2)})">
+          <div class="est-v">${f1(x.est)}</div><div class="est-u">${x.p.size}P · ${x.r.size}R</div></td>`;
+      }).join('');
+      return `<tr><td><b>${esc(dk.dock)}</b></td>
+        <td class="n">${f1(dk.cap.mean)}<div class="est-u">${dk.cap.own ? `${dk.cap.n} คัน` : 'ใช้ค่าเฉลี่ย WH'}</div></td>
+        ${cells}<td class="n"><b>${f1(de)}</b><div class="est-u">${du} หน่วย</div></td></tr>`;
+    }).join('');
+    const sumRow = est.buckets.map((b) => { const t = tot.get(b.key); return `<td class="n"><b>${Math.ceil(t.est - 1e-9)}</b> คัน<div class="est-u">${t.p}P · ${t.r}R</div></td>`; }).join('');
+    const sepRow = est.buckets.map((b) => `<td class="n">${tot.get(b.key).perDock} คัน</td>`).join('');
+    const allUnits = [...tot.values()].reduce((a, t) => a + t.units, 0);
+    return `<section class="panel"><div class="panel-h"><h2>${wh}</h2>
+        <span class="hint">ต้องใช้รถประมาณ <b>${whTrucks}</b> คัน (ขึ้นรถรวมกันได้) สำหรับงานค้าง ${allUnits} หน่วย</span></div>
+      <div class="table-wrap"><table class="tbl est"><thead><tr><th>Dock</th><th class="n">หน่วย/คัน<br><small>(จากประวัติ)</small></th>${head}<th class="n">รวม</th></tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr><td>Est รถ (ขึ้นรวมกัน)</td><td></td>${sumRow}<td class="n"><b>${whTrucks}</b> คัน</td></tr>
+        <tr class="sub"><td>ถ้าแยกรถตาม Dock</td><td></td>${sepRow}<td class="n">${[...tot.values()].reduce((a, t) => a + t.perDock, 0)} คัน</td></tr></tfoot></table></div></section>`;
+  }).join('');
+  $('#estBody').innerHTML = html;
+  const tile = (cls, lbl, v, det = '') => `<div class="kpi ${cls}"><div class="lbl">${lbl}</div><div class="val">${v}</div><div class="det">${det}</div></div>`;
+  $('#estTiles').innerHTML = [
+    tile('trip', 'Est รถที่ต้องใช้', `${totalTrucks} <small>คัน</small>`, scope.join(' + ')),
+    tile('pending', 'งานค้าง (ยังไม่ Shipping)', `${totalP + totalR} <small>หน่วย</small>`, `${totalP} Pallet · ${totalR} Rack · ${totalBox.toLocaleString()} กล่อง`),
+    ...PERIODS.map(([k, n, t]) => tile('scan', `ช่วง${n}`, `${perPeriod[k]} <small>คัน</small>`, t)),
+  ].join('');
+  $('#estNote').textContent = notes.length ? `วิธีคิด: Est = หน่วยค้าง (Pallet + Rack) ÷ หน่วยเฉลี่ยต่อคันของ Dock นั้น จากรถที่ส่งไปแล้วในฐานข้อมูล
+    (รถที่ Dock นั้นเป็น ≥ 80% ของของบนรถ; ถ้ามีน้อยกว่า 3 คันใช้ค่าเฉลี่ยของ WH) · ${notes.join(' · ')}` : '';
+  return totalTrucks;
+}
+
 // ---------- pages ----------
-const PAGES = ['overview', 'window', 'trucks', 'detail', 'data'];
+const PAGES = ['overview', 'window', 'trucks', 'est', 'detail', 'data'];
 function go(page) {
   if (location.hash !== '#' + page) location.hash = page; else showPage();
 }
