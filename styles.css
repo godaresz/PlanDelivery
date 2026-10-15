@@ -50,7 +50,7 @@ body { font-family: 'IBM Plex Sans Thai', system-ui, sans-serif; font-size: 14px
 .nav .cnt.red { background: var(--c-overdue); color: #fff; }
 .page { display: flex; flex-direction: column; gap: 14px; }
 .link { margin-left: auto; color: var(--c-pending); text-decoration: none; font-size: 13px; font-weight: 500; }
-.ov-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.ov-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 14px; }
 .bar-row { display: grid; grid-template-columns: 70px 1fr 120px 90px; align-items: center; gap: 10px; padding: 7px 6px; border-radius: 8px; cursor: pointer; }
 .bar-row:hover { background: #F9FAFB; }
 .bar-row .bw { font-weight: 600; }
