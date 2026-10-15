@@ -661,7 +661,7 @@ function renderPlan(all, scope, trips) {
   for (const wh of scope) {
     const model = estModel(wh);
     if (!model.whMean) { notes.push(`${wh}: ยังไม่มีประวัติรถที่ Confirm แล้ว จึงยังประมาณการไม่ได้`); continue; }
-    const est = estimateTrucks(all[wh], model, null, (due) => {
+    const est = estimateTrucks(shipBinRows(all[wh]), model, null, (due) => {
       const h = place(due);
       return { key: h.key };
     });
@@ -674,7 +674,7 @@ function renderPlan(all, scope, trips) {
   }
   for (const x of trips) {
     if (!scope.includes(x.whOwn)) continue;
-    if (x.dueStart) place(x.dueStart).wh[x.whOwn].sn.add(x.sn);
+    if (x.dueStart) place(S.mode === 'sn' && x.info ? clampToShift(x.dueStart, x.info) : x.dueStart).wh[x.whOwn].sn.add(x.sn);
     // departures go to their own hour, even outside the range (a truck may leave before its shift starts)
     if (x.left && x.dep) { const d = x.dep; slot(hk(d), new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours())).wh[x.whOwn].left.add(x.sn); }
   }
@@ -747,6 +747,23 @@ function renderPlan(all, scope, trips) {
     }).join('')}${many ? `<td class="n">${tot.n} คัน</td>` : ''}<td></td></tr></tfoot>`;
 }
 
+// Ship-date mode: the rows of a day/shift's trucks can carry a due on another day (sent early, or old backlog).
+// For the Est / Plan buckets such a row is placed inside its truck's shift: Shipping Time if that is in the shift,
+// else the due moved to the nearest edge of the shift. Due mode is unchanged.
+function clampToShift(t, info) {
+  const lo = info.start, hi = new Date(info.end.getTime() - 60000);
+  return t < lo ? lo : t > hi ? hi : t;
+}
+function inShift(t, info) { return t && t >= info.start && t < info.end; }
+function shipBinRows(rows) {
+  if (S.mode !== 'sn') return rows;
+  return rows.map((r) => {
+    const info = r.due && parseTrip(r.sn);
+    if (!info || inShift(r.due, info)) return r;
+    return { ...r, due: inShift(r.shipT, info) ? r.shipT : clampToShift(r.due, info) };
+  });
+}
+
 // load-group model learned from the truck history (+ trucks in the loaded rows); beforeKey = learn only from trucks dated before it.
 // Cached for one render so the Est and Plan pages share it.
 function estModel(wh, beforeKey = '') {
@@ -780,7 +797,7 @@ function renderEst(all, scope) {
   const chipList = (arr, hl) => arr.map((x) => `<span class="gchip${hl && hl.has(x) ? ' on' : ''}">${esc(x)}</span>`).join('');
   const html = scope.map((wh) => {
     const model = estModel(wh, cmp ? startKey : '');
-    const work = cmp ? all[wh] : all[wh].filter((r) => !r.done);
+    const work = shipBinRows(cmp ? all[wh] : all[wh].filter((r) => !r.done));
     const est = estimateTrucks(work, model, cmp ? truckPallets : null);
     const known = [...model.groups.values()].filter((g) => !g.isNew);
     const d8 = (x) => (x ? `${x.slice(6, 8)}/${x.slice(4, 6)}/${x.slice(0, 4)}` : '-');
@@ -853,7 +870,7 @@ function renderEst(all, scope) {
     tile('pending', 'งานค้าง (ยังไม่ Shipping)', `${totalP + totalR} <small>หน่วย</small>`, `${totalP} Pallet · ${totalR} Rack · ${totalBox.toLocaleString()} กล่อง`),
     ...PERIODS.map(([k, n, t]) => tile('scan', `ช่วง${n}`, `${perPeriod[k]} <small>คัน</small>`, t)),
   ].join('');
-  $('#estNote').textContent = `วิธีคิด: จับกลุ่ม Dock + Window ที่เคยขึ้นรถคันเดียวกัน (ด้วยกัน ≥ ${LINK_MIN} ครั้ง และ ≥ ${LINK_SHARE * 100}% ของครั้งที่ขึ้นรถ)
+  $('#estNote').textContent = (S.mode === 'sn' ? 'โหมดวันที่ส่ง: พาเลทที่ Due เป็นวัน/กะอื่น (ส่งล่วงหน้า หรือของค้างเก่า) ถูกจัดเข้าช่วงเวลาในกะของรถ (ใช้เวลา Shipping ถ้าอยู่ในกะ ไม่งั้นใช้ต้น/ท้ายกะ) · ' : '') + `วิธีคิด: จับกลุ่ม Dock + Window ที่เคยขึ้นรถคันเดียวกัน (ด้วยกัน ≥ ${LINK_MIN} ครั้ง และ ≥ ${LINK_SHARE * 100}% ของครั้งที่ขึ้นรถ)
     แล้วคิด Est = หน่วยค้างของกลุ่ม (Pallet + Rack) ÷ หน่วยเฉลี่ยต่อคันของกลุ่มในกะนั้น (กะดูจากชื่อ Window เช่น 1D05 = กะเช้า, 1N05 = กะดึก; ถ้าไม่มีดูจากเวลา Due;
     น้อยกว่า 3 คันใช้ค่าของกลุ่ม หรือค่าเฉลี่ย WH) · ประวัติรถเก็บสรุปไว้แยก ใช้ได้ทั้งหมดแม้ข้อมูลถูกย้ายเข้าประวัติแล้ว ·
     Rack คิดพื้นที่เทียบ Pallet ตามประวัติ (รถขน Pallet ล้วน ÷ รถขน Rack ล้วน) · Window ที่ไม่เคยมีในประวัติ จัดกลุ่มจาก Part No. แล้ว Supplier ·

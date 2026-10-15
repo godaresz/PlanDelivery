@@ -99,6 +99,9 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
      is still fair. Back-test on real data Sep–Oct (53 shifts per WH,
      learning only from earlier data): mean error WH1 4.1%, WH4 5.7%.
 
+   - Ship-date mode (Est and Plan): a row whose due is outside its truck's shift (sent early / old backlog) is bucketed
+     inside the shift — its Shipping Time if that is in the shift, else the due moved to the nearest shift edge
+     (`shipBinRows`); a truck's Due start is clamped the same way on the Plan page.
 12. **Hourly truck plan (page `#plan`)**: all pallets in the view (shipped + open), Est model in 1-hour buckets of the due
    used (`hourBucket`); whole trucks per WH by largest remainder (adds up to ceil of the WH sum). Shown with: trucks whose
    Due start is in the hour (Shipping No., value labels on the chart line; table also shows pallets+racks that already have a Shipping No.) and trucks that left in the hour (ILMS/WMS departure, even outside the range).
