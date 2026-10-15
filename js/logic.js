@@ -360,8 +360,8 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
     if (!r.due) continue;
     const k = r.pl || r.k;
     const x = pal.get(k);
-    if (!x) pal.set(k, { due: r.due, rk: r.rk, box: r.bx, d: r.d, w: r.w, p: r.p, s: r.s, sn: r.cf === 1 ? r.sn : '', open: !r.done });
-    else { x.box += r.bx; if (r.due < x.due) x.due = r.due; if (!x.sn && r.cf === 1) x.sn = r.sn; if (!r.done) x.open = true; }
+    if (!x) pal.set(k, { due: r.due, rk: r.rk, box: r.bx, d: r.d, w: r.w, p: r.p, s: r.s, sn: r.cf === 1 ? r.sn : '', open: !r.done, hasSn: !!r.sn });
+    else { x.box += r.bx; if (r.due < x.due) x.due = r.due; if (!x.sn && r.cf === 1) x.sn = r.sn; if (!r.done) x.open = true; if (r.sn) x.hasSn = true; }
   }
   const buckets = new Map(), rowsOut = new Map();
   const via = { Window: 0, Part: 0, Supplier: 0, new: 0 };
@@ -373,9 +373,9 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
     if (!rowsOut.has(g.id)) rowsOut.set(g.id, { group: g, cells: new Map(), openDocks: new Set(), openWins: new Set(), via: new Set() });
     const o = rowsOut.get(g.id);
     o.openDocks.add(pl.d || '-'); o.openWins.add(pl.w || '-'); if (how !== 'Window') o.via.add(how);
-    if (!o.cells.has(bk)) o.cells.set(bk, { p: new Set(), r: new Set(), box: 0, est: 0, estS: 0, act: 0, shipped: 0, trucks: new Set(), open: 0 });
+    if (!o.cells.has(bk)) o.cells.set(bk, { p: new Set(), r: new Set(), box: 0, est: 0, estS: 0, act: 0, shipped: 0, trucks: new Set(), open: 0, hasSn: 0 });
     const x = o.cells.get(bk);
-    (pl.rk ? x.r : x.p).add(k); x.box += pl.box; if (pl.open) x.open++;
+    (pl.rk ? x.r : x.p).add(k); x.box += pl.box; if (pl.open) x.open++; if (pl.hasSn) x.hasSn++;
     // shift: from the Window name (xDnn / xNnn) when it has one, else from the due time (back-test: WH4 error 12% -> 6%)
     const ws = String(pl.w || '')[1];
     const cap = g.cap[ws === 'D' || ws === 'N' ? ws : shiftOfTime(pl.due)] || g.mean;

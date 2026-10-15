@@ -396,3 +396,5 @@ body.anim .plan-chart .ln { stroke-dasharray: 4000; animation: drawLn 1.4s var(-
 body.anim .tbl.plan td.plan-bar span { transform-origin: left; animation: growX .9s var(--ease) both .2s; }
 .tbl.plan thead tr:nth-child(2) th { top: 33px; }
 .tbl.plan td { vertical-align: middle; white-space: nowrap; }
+.plan-chart .lv { font: 600 11px 'IBM Plex Sans Thai', sans-serif; fill: #6D28D9; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
+.tbl.plan .c-sn { color: #6D28D9; }

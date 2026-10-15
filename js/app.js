@@ -651,7 +651,7 @@ function renderPlan(all, scope, trips) {
   const hk = (d) => hourBucket(d).key;
   const hours = new Map(); // key -> { key, t: Date, before, wh: { WH1: {...} } }
   const slot = (key, t, before = false) => {
-    if (!hours.has(key)) hours.set(key, { key, t, before, wh: Object.fromEntries(scope.map((w) => [w, { p: 0, r: 0, open: 0, est: 0, n: 0, sn: new Set(), left: new Set() }])) });
+    if (!hours.has(key)) hours.set(key, { key, t, before, wh: Object.fromEntries(scope.map((w) => [w, { p: 0, r: 0, open: 0, hasSn: 0, est: 0, n: 0, sn: new Set(), left: new Set() }])) });
     return hours.get(key);
   };
   const BEFORE = '0000 before';
@@ -669,7 +669,7 @@ function renderPlan(all, scope, trips) {
     const alloc = allocateWhole(cells.map(([, x]) => x.est));
     cells.forEach(([bk, x], i) => {
       const c = hours.get(bk).wh[wh];
-      c.p += x.p.size; c.r += x.r.size; c.open += x.open; c.est += x.est; c.n += alloc.out[i];
+      c.p += x.p.size; c.r += x.r.size; c.open += x.open; c.hasSn += x.hasSn; c.est += x.est; c.n += alloc.out[i];
     });
   }
   for (const x of trips) {
@@ -680,10 +680,10 @@ function renderPlan(all, scope, trips) {
   }
   const list = [...hours.values()].sort((a, b) => a.key.localeCompare(b.key));
   const sum = (h, f) => scope.reduce((a, w) => a + f(h.wh[w]), 0);
-  const tot = { n: 0, est: 0, sn: 0, left: 0, p: 0, r: 0, open: 0 };
+  const tot = { n: 0, est: 0, sn: 0, left: 0, p: 0, r: 0, open: 0, hasSn: 0 };
   for (const h of list) {
     tot.n += sum(h, (c) => c.n); tot.est += sum(h, (c) => c.est); tot.sn += sum(h, (c) => c.sn.size);
-    tot.left += sum(h, (c) => c.left.size); tot.p += sum(h, (c) => c.p); tot.r += sum(h, (c) => c.r); tot.open += sum(h, (c) => c.open);
+    tot.left += sum(h, (c) => c.left.size); tot.p += sum(h, (c) => c.p); tot.r += sum(h, (c) => c.r); tot.open += sum(h, (c) => c.open); tot.hasSn += sum(h, (c) => c.hasSn);
   }
   const peak = list.filter((h) => !h.before).reduce((m, h) => (sum(h, (c) => c.n) > (m ? sum(m, (c) => c.n) : -1) ? h : m), null);
   const hourLbl = (h) => (h.before ? 'ค้างก่อนช่วง' : `${String(h.t.getHours()).padStart(2, '0')}:00–${String(h.t.getHours()).padStart(2, '0')}:59`);
@@ -691,12 +691,12 @@ function renderPlan(all, scope, trips) {
   const tile = (cls, lbl, v, det = '') => `<div class="kpi ${cls}"><div class="lbl">${lbl}</div><div class="val">${v} <small>คัน</small></div><div class="det">${det}</div></div>`;
   $('#planTiles').innerHTML = list.length ? [
     tile('pending', 'รถตาม Plan (Est)', tot.n, `${f1(tot.est)} คัน · ${tot.p} Pallet · ${tot.r} Rack`),
-    tile('trip', 'จัดรถแล้ว (Shipping No.)', tot.sn, 'นับตาม Due เริ่มของรถ'),
+    tile('trip', 'จัดรถแล้ว (Shipping No.)', tot.sn, `นับตาม Due เริ่มของรถ · งานที่มี Shipping No. แล้ว ${tot.hasSn}/${tot.p + tot.r} หน่วย (${tot.p + tot.r ? Math.round((tot.hasSn / (tot.p + tot.r)) * 100) : 0}%)`),
     tile('done', 'ออกแล้ว', tot.left, 'นับตามเวลาออกจริง'),
     tile('overdue', 'ชั่วโมงที่ใช้รถมากสุด', peak ? sum(peak, (c) => c.n) : 0, peak ? `${dayLbl(peak)} ${hourLbl(peak)}` : ''),
   ].join('') : '';
   $('#cntPlan').textContent = tot.n || '';
-  $('#planHint').textContent = notes.join(' · ') || 'Plan = รถที่ต้องใช้ (ปัดเป็นคันเต็ม ยอดรวมเท่ากับหน้าประมาณการรถ) · จัดแล้ว = รถที่มี Shipping No. ซึ่ง Due เริ่มอยู่ในชั่วโมงนั้น · ออกแล้ว = เวลาออกจริง (ILMS / WMS)';
+  $('#planHint').textContent = notes.join(' · ') || 'Plan = รถที่ต้องใช้ (ปัดเป็นคันเต็ม ยอดรวมเท่ากับหน้าประมาณการรถ) · จัดแล้ว = รถที่มี Shipping No. ซึ่ง Due เริ่มอยู่ในชั่วโมงนั้น · มี SN = Pallet+Rack ของชั่วโมงนั้นที่มี Shipping No. แล้ว · ออกแล้ว = เวลาออกจริง (ILMS / WMS)';
 
   // chart: bars = trucks needed (Plan), line = trucks with a Shipping No., dots = trucks that left
   const now = new Date();
@@ -721,18 +721,18 @@ function renderPlan(all, scope, trips) {
         ${sum(h, (c) => c.left.size) ? `<circle cx="${cx(i)}" cy="${y(sum(h, (c) => c.left.size))}" r="4" class="dot"/>` : ''}</g>`;
     }).join('')}
     <path d="${line}" class="ln"/>
-    ${list.map((h, i) => `<circle cx="${cx(i)}" cy="${y(sum(h, (c) => c.sn.size))}" r="3" class="lnp"/>`).join('')}
+    ${list.map((h, i) => { const v = sum(h, (c) => c.sn.size); return `<circle cx="${cx(i)}" cy="${y(v)}" r="3" class="lnp"/>${v ? `<text x="${cx(i) + 6}" y="${y(v) - 6}" class="lv">${v}</text>` : ''}`; }).join('')}
     </svg></div>`;
 
   // table: one row per hour; per WH: Plan trucks, work, assigned, left
   const many = scope.length > 1;
   const cell = (c) => `<td class="n plan-n"><b>${c.n}</b> <small>คัน</small> <span class="est-u">(${f1(c.est)})</span></td>
     <td class="n">${c.p + c.r ? `${n0(c.p)} / ${n0(c.r)}` : '<span class="z">-</span>'}${c.open ? ` <span class="est-u c-pe">ค้าง ${c.open}</span>` : ''}</td>
-    <td class="n">${c.sn.size || '<span class="z">-</span>'}</td><td class="n">${c.left.size || '<span class="z">-</span>'}</td>`;
+    <td class="n">${c.sn.size ? `<b class="c-sn">${c.sn.size}</b> <small>คัน</small>` : '<span class="z">-</span>'}${c.p + c.r ? ` <span class="est-u">มี SN ${c.hasSn}/${c.p + c.r}</span>` : ''}</td><td class="n">${c.left.size || '<span class="z">-</span>'}</td>`;
   const maxN = Math.max(1, ...list.map((h) => sum(h, (c) => c.n)));
   $('#tblPlan').innerHTML = `<thead><tr><th rowspan="2">วันที่</th><th rowspan="2">ช่วงเวลา (Due)</th>
       ${scope.map((w) => `<th colspan="4" class="grp">${w}</th>`).join('')}${many ? '<th rowspan="2" class="n">รวมรถ (Plan)</th>' : ''}<th rowspan="2" class="plan-barh"></th></tr>
-    <tr>${scope.map(() => '<th class="n">Plan</th><th class="n">Pallet / Rack</th><th class="n">จัดแล้ว</th><th class="n">ออกแล้ว</th>').join('')}</tr></thead>
+    <tr>${scope.map(() => '<th class="n">Plan</th><th class="n">Pallet / Rack</th><th class="n">จัดแล้ว (Shipping No.)</th><th class="n">ออกแล้ว</th>').join('')}</tr></thead>
     <tbody>${list.map((h) => {
       const n = sum(h, (c) => c.n), cur = !h.before && now >= h.t && now < new Date(h.t.getTime() + 3600000);
       const empty = !n && !sum(h, (c) => c.p + c.r + c.sn.size + c.left.size);
@@ -742,8 +742,8 @@ function renderPlan(all, scope, trips) {
         <td class="plan-bar"><span style="width:${(n / maxN) * 100}%"></span></td></tr>`;
     }).join('')}</tbody>
     <tfoot><tr><td colspan="2">รวม</td>${scope.map((w) => {
-      const c = list.reduce((a, h) => { const x = h.wh[w]; a.n += x.n; a.est += x.est; a.p += x.p; a.r += x.r; a.open += x.open; a.sn += x.sn.size; a.left += x.left.size; return a; }, { n: 0, est: 0, p: 0, r: 0, open: 0, sn: 0, left: 0 });
-      return `<td class="n">${c.n} คัน<div class="est-u">${f1(c.est)}</div></td><td class="n">${c.p} / ${c.r}${c.open ? `<div class="est-u">ค้าง ${c.open}</div>` : ''}</td><td class="n">${c.sn}</td><td class="n">${c.left}</td>`;
+      const c = list.reduce((a, h) => { const x = h.wh[w]; a.n += x.n; a.est += x.est; a.p += x.p; a.r += x.r; a.open += x.open; a.hasSn += x.hasSn; a.sn += x.sn.size; a.left += x.left.size; return a; }, { n: 0, est: 0, p: 0, r: 0, open: 0, hasSn: 0, sn: 0, left: 0 });
+      return `<td class="n">${c.n} คัน<div class="est-u">${f1(c.est)}</div></td><td class="n">${c.p} / ${c.r}${c.open ? `<div class="est-u">ค้าง ${c.open}</div>` : ''}</td><td class="n">${c.sn} คัน<div class="est-u">มี SN ${c.hasSn}/${c.p + c.r}</div></td><td class="n">${c.left}</td>`;
     }).join('')}${many ? `<td class="n">${tot.n} คัน</td>` : ''}<td></td></tr></tfoot>`;
 }
 
