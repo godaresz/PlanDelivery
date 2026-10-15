@@ -398,3 +398,6 @@ body.anim .tbl.plan td.plan-bar span { transform-origin: left; animation: growX 
 .tbl.plan td { vertical-align: middle; white-space: nowrap; }
 .plan-chart .lv { font: 600 11px 'IBM Plex Sans Thai', sans-serif; fill: #6D28D9; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
 .tbl.plan .c-sn { color: #6D28D9; }
+.range-warn { font-size: 12.5px; font-weight: 600; color: #B91C1C; background: #FEF2F2; border: 1px solid #FCA5A5;
+  border-radius: 8px; padding: 6px 10px; animation: fadeIn .25s ease; }
+.dt-wrap.bad .dt-show { border-color: #EF4444; box-shadow: 0 0 0 3px #FEE2E2; }

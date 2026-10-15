@@ -408,8 +408,15 @@ function countUp(root) {
   };
   requestAnimationFrame(step);
 }
+// due mode: warn when the start is after the end (the range would be empty)
+function checkRange() {
+  const s = fromInput($('#fStart').value), e = fromInput($('#fEnd').value);
+  const bad = S.mode !== 'sn' && !!s && !!e && s > e;
+  $('#rangeWarn').hidden = !bad;
+  $$('#fgDue .dt-wrap').forEach((w) => w.classList.toggle('bad', bad));
+}
 function render(quiet = false) {
-  syncDates();
+  syncDates(); checkRange();
   if (!S.data) return;
   const animate = !quiet && !calm.matches;
   if (animate) {
