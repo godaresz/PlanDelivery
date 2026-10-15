@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, truckSummaries, mergeTruckHist, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -250,6 +250,7 @@ async function reload() {
     S.slideMap = new Map();
     const sd = S.data.slide.data;
     if (sd) sd.orders.forEach((o, i) => S.slideMap.set(o, sd.dues[i]));
+    S.hist = S.data.truckhist.data || { WH1: {}, WH4: {} };
     S.ilmsMap = new Map((S.data.ilms.data || []).map((r) => [r.tp, { ...r, dt: fromKey(r.dt) }]));
     renderSources();
     render();
@@ -278,7 +279,8 @@ function renderSources() {
   const arch = WHS.map((wh) => { const ds = Object.keys(ai[wh] || {}).sort(); const n = ds.reduce((a, d) => a + ai[wh][d], 0);
     return ds.length ? `<b>${wh}</b> ${ds.length} วัน · ${n.toLocaleString()} แถว (${dmy(new Date(ds[0] + 'T00:00'))} – ${dmy(new Date(ds[ds.length - 1] + 'T00:00'))})` : ''; })
     .filter(Boolean);
-  $('#srcWMS .src-meta').innerHTML += `<div class="arch-meta">ประวัติที่ส่งแล้ว (ไม่ลบ): ${arch.length ? arch.join(' · ') : 'ยังไม่มี'}</div>`;
+  $('#srcWMS .src-meta').innerHTML += `<div class="arch-meta">ประวัติที่ส่งแล้ว (ไม่ลบ): ${arch.length ? arch.join(' · ') : 'ยังไม่มี'}</div>`
+    + `<div class="arch-meta">สรุปรถสำหรับประมาณการ: ${WHS.map((wh) => `<b>${wh}</b> ${Object.keys((S.hist && S.hist[wh]) || {}).length.toLocaleString()} คัน`).join(' · ')}</div>`;
   const im = S.data.ilms.meta;
   const sns = new Set(WHS.flatMap((wh) => (S.data[wh].data || []).map((r) => r.sn).filter(Boolean)));
   const matched = [...S.ilmsMap.keys()].filter((tp) => sns.has(tp)).length;
@@ -571,15 +573,18 @@ function renderEst(all, scope) {
   const notes = [];
   const chipList = (arr, hl) => arr.map((x) => `<span class="gchip${hl && hl.has(x) ? ' on' : ''}">${esc(x)}</span>`).join('');
   const html = scope.map((wh) => {
-    const model = learnLoadGroups(S.view.full[wh]);
+    const model = learnLoadGroups(mergeTruckHist((S.hist && S.hist[wh]) || {}, truckSummaries(S.view.full[wh])));
     const open = all[wh].filter((r) => !r.done);
     const est = estimateTrucks(open, model);
     const known = [...model.groups.values()].filter((g) => !g.isNew);
-    notes.push(`${wh}: ${known.length} กลุ่ม จากรถ ${model.trucks} คัน (เฉลี่ย ${f1(model.whMean)} หน่วย/คัน)`);
+    const d8 = (x) => (x ? `${x.slice(6, 8)}/${x.slice(4, 6)}/${x.slice(0, 4)}` : '-');
+    notes.push(`${wh}: ${known.length} กลุ่ม จากรถ ${model.trucks} คัน (${d8(model.from)} – ${d8(model.to)}) · เฉลี่ยกะเช้า ${f1(model.whShift.D)} · กะดึก ${f1(model.whShift.N)} หน่วย/คัน`
+      + (model.skipped.length ? ` · ไม่ใช้กะที่ข้อมูลไม่ครบ: ${model.skipped.map((k) => `${k.slice(6, 8)}/${k.slice(4, 6)} ${k[8]}`).join(', ')}` : ''));
     const ref = `<details class="grp-ref"><summary>กลุ่ม Dock + Window ที่ไปด้วยกัน (เรียนรู้จากประวัติ ${model.trucks} คัน) — ${known.length} กลุ่ม</summary>
-      <div class="table-wrap"><table class="tbl"><thead><tr><th>Dock</th><th>Window Name</th><th class="n">รถในประวัติ</th><th class="n">หน่วย/คัน</th></tr></thead><tbody>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>Dock</th><th>Window Name</th><th class="n">รถในประวัติ</th><th class="n">หน่วย/คัน</th><th class="n">กะเช้า (D)</th><th class="n">กะดึก (N)</th></tr></thead><tbody>
       ${known.sort((a, b) => b.n - a.n).map((g) => `<tr><td>${chipList(g.docks)}</td><td class="wins">${chipList(g.windows)}</td>
-        <td class="n">${g.n}</td><td class="n">${g.own ? f1(g.mean) : `<span class="hint">${f1(g.mean)} (ค่าเฉลี่ย WH)</span>`}</td></tr>`).join('')}</tbody></table></div></details>`;
+        <td class="n">${g.n}</td><td class="n">${g.own ? f1(g.mean) : `<span class="hint">${f1(g.mean)} (ค่าเฉลี่ย WH)</span>`}</td>
+        <td class="n">${f1(g.cap.D)}<div class="est-u">${g.D.length} คัน</div></td><td class="n">${f1(g.cap.N)}<div class="est-u">${g.N.length} คัน</div></td></tr>`).join('')}</tbody></table></div></details>`;
     if (!est.groups.length) return `<section class="panel"><div class="panel-h"><h2>${wh}</h2></div><p class="hint">ไม่มีงานค้างในช่วงเวลานี้</p>${ref}</section>`;
     // fractional trucks are summed first and rounded up once (back-tested closest to the real truck count)
     const tot = new Map(est.buckets.map((b) => [b.key, { p: 0, r: 0, est: 0 }]));
@@ -606,7 +611,7 @@ function renderEst(all, scope) {
       }).join('');
       return `<tr><td class="grp">${chipList(g.docks, o.openDocks)}${g.isNew ? '<span class="src-tag">ไม่มีในประวัติ</span>' : ''}
           <div class="gwin">${chipList(g.windows, o.openWins)}</div></td>
-        <td class="n">${f1(g.mean)}<div class="est-u">${g.own ? `${g.n} คัน` : 'ค่าเฉลี่ย WH'}</div></td>
+        <td class="n">D ${f1(g.cap.D)} · N ${f1(g.cap.N)}<div class="est-u">${g.own ? `${g.n} คัน` : 'ค่าเฉลี่ย WH'}</div></td>
         ${cells}<td class="n"><b>${f1(de)}</b><div class="est-u">${du} หน่วย</div></td></tr>`;
     }).join('');
     const sumRow = est.buckets.map((b) => { const t = tot.get(b.key); return `<td class="n"><b>${f1(t.est)}</b><div class="est-u">${t.p}P · ${t.r}R</div></td>`; }).join('');
@@ -625,7 +630,8 @@ function renderEst(all, scope) {
     ...PERIODS.map(([k, n, t]) => tile('scan', `ช่วง${n}`, `${f1(perPeriod[k])} <small>คัน</small>`, t)),
   ].join('');
   $('#estNote').textContent = `วิธีคิด: จับกลุ่ม Dock + Window ที่เคยขึ้นรถคันเดียวกัน (ด้วยกัน ≥ ${LINK_MIN} ครั้ง และ ≥ ${LINK_SHARE * 100}% ของครั้งที่ขึ้นรถ)
-    แล้วคิด Est = หน่วยค้างของกลุ่ม (Pallet + Rack) ÷ หน่วยเฉลี่ยต่อคันของกลุ่ม (กลุ่มที่มีรถในประวัติน้อยกว่า 3 คันใช้ค่าเฉลี่ย WH) ·
+    แล้วคิด Est = หน่วยค้างของกลุ่ม (Pallet + Rack) ÷ หน่วยเฉลี่ยต่อคันของกลุ่มในกะนั้น (กะเช้า 07:30–19:59 / กะดึก ตาม Due ของพาเลท;
+    น้อยกว่า 3 คันใช้ค่าของกลุ่ม หรือค่าเฉลี่ย WH) · ประวัติรถเก็บสรุปไว้แยก ใช้ได้ทั้งหมดแม้ข้อมูลถูกย้ายเข้าประวัติแล้ว ·
     รวมทศนิยมทุกกลุ่มแล้วปัดขึ้นครั้งเดียว (ตัวเลขในตารางเป็นจำนวนคันแบบทศนิยม) · ${notes.join(' · ')}`;
   return Math.ceil(totalEst - 1e-9);
 }
@@ -746,6 +752,7 @@ async function onUpload(e) {
       const keepDays = Number(S.rules.keepDays) || 7;
       const msgs = [];
       const index = latest.archIndex || { WH1: {}, WH4: {} };
+      const hist = (latest.truckhist && latest.truckhist.data) || { WH1: {}, WH4: {} };
       for (const wh of found) { // a warehouse missing from the file keeps its old data
         const oldRows = (latest[wh] && latest[wh].data) || [];
         // rows of this file that may already be archived: load those archive days to lock their keys
@@ -759,11 +766,14 @@ async function onUpload(e) {
           await store.appendArchive(wh, byDay, index);
           S.arch.clear();
         }
+        // truck summaries for Est (kept separately, so history older than the active data is still used)
+        hist[wh] = mergeTruckHist(hist[wh] || {}, truckSummaries(m.rows.concat(m.toArchive)));
         await store.saveWms(wh, m.rows, { fileName: file.name, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped });
         msgs.push(`${wh} ${split[wh].length.toLocaleString()} แถว` + (m.skipped ? ` · ข้ามที่ Confirm แล้ว ${m.skipped.toLocaleString()}` : '')
           + (m.kept ? ` · เก็บที่ส่งแล้วจากรอบก่อน ${m.kept.toLocaleString()}` : '')
           + (m.toArchive.length ? ` · ย้ายเข้าประวัติ ${m.toArchive.length.toLocaleString()}` : ''));
       }
+      await store.saveTruckHist(hist, { WH1: Object.keys(hist.WH1 || {}).length, WH4: Object.keys(hist.WH4 || {}).length });
       const miss = WHS.filter((wh) => !split[wh].length);
       toast(`อัปเดต WMS แล้ว: ${msgs.join(' · ')}` + (miss.length ? ` · ไม่มีข้อมูล ${miss.join(', ')} ในไฟล์ (คงข้อมูลเดิม)` : '')
         + (other ? ` · ข้ามแถวอื่น ${other}` : ''), false, 9000);

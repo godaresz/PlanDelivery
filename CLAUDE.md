@@ -18,6 +18,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 - `js/store.js` — Firestore / localStorage. All data lives in collection `shipcheck`:
   `slide_meta` + `slide_c0..n`, `WH1_meta` + `WH1_c*`, `WH4_meta` + `WH4_c*`, `ilms_meta` + `ilms_c*`, `rules`,
   archive `arch_<WH>_<YYYYMMDD>_meta` + `_c*` (shipped rows by ship day, never deleted) + `arch_index`.
+  `truckhist_meta` + `_c*` = compact truck summaries for Est `{WH1: {sn: {s, d, u, n: {'Dock|Window': units}}}}`,
+  updated on every WMS upload (max per Dock|Window), kept 365 days, NOT removed by the quarterly delete.
   Viewers load the archive only for the days being viewed (±1 day).
   Payloads are JSON split into ≤700k-char chunk docs so a page load is ~10 reads. Viewers watch only the meta docs.
 - `js/app.js` — UI (Thai labels), uploads, filters, rules dialog, Excel export.
@@ -69,11 +71,12 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Due start (ILMS) / a row shipped after its due (WMS fallback). Remaining = not left; overdue = Due start passed.
 11. **Truck estimate (Est, page `#est`)**: open (not shipped) pallets in the current filter. Each pallet counts once
    (bucket of its earliest due; Dock|Window of its first row). Buckets = due day × period ตี 00–05 / เช้า 06–11 /
-   บ่าย 12–17 / ทุ่ม 18–23. Load groups ("ไปด้วยกัน") are learned from shipped trucks in the database: Dock|Window
-   nodes that shared a truck ≥ 2 times and in ≥ 30% of the less frequent node's trucks are linked (connected groups).
-   Group units/truck = mean load of trucks whose largest part is that group (< 3 trucks → WH mean).
-   Est = units ÷ group units/truck, shown as decimals; totals sum decimals and round up once (back-tested
-   against real shifts 12–14/10: within about −5%…+20%).
+   บ่าย 12–17 / ทุ่ม 18–23. Learning uses the truck history (`truckhist`, all uploads incl. archived) + loaded rows.
+   Shift-days whose mean load is < 60% of the median shift-day are skipped (incomplete uploads).
+   Load groups ("ไปด้วยกัน"): Dock|Window nodes that shared a truck ≥ 2 times and in ≥ 30% of the less frequent
+   node's trucks are linked (connected groups). Group units/truck = mean load of trucks whose largest part is the
+   group, by shift D/N (< 3 trucks → group mean → WH shift mean). Each pallet adds 1 ÷ (its group's load in the shift
+   of its due); totals sum decimals and round up once. Back-test 12–14/10: within about ±10%.
 
 ## UI colours (user's standard palette)
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED

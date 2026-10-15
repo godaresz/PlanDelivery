@@ -101,11 +101,13 @@ export async function loadAll() {
   const [slide, wh1, wh4, ilms, rules] = await Promise.all([
     loadChunked('slide'), loadChunked('WH1'), loadChunked('WH4'), loadChunked('ilms'), getDoc('rules'),
   ]);
+  const truckhist = await loadChunked('truckhist');
   const archIndex = await loadArchIndex();
-  return { slide, WH1: wh1, WH4: wh4, ilms, rules, archIndex };
+  return { slide, WH1: wh1, WH4: wh4, ilms, rules, archIndex, truckhist };
 }
 export const saveSlide = (payload, meta) => saveChunked('slide', payload, meta);
 export const saveWms = (wh, rows, meta) => saveChunked(wh, rows, meta);
+export const saveTruckHist = (hist, meta) => saveChunked('truckhist', hist, meta);
 export const saveIlms = (rows, meta) => saveChunked('ilms', rows, meta);
 // ---------- archive: shipped rows by day, written once and never deleted ----------
 // docs arch_<WH>_<YYYYMMDD>_meta + _c*; index doc arch_index = { WH1: { 'YYYY-MM-DD': rowCount }, WH4: {...} }
