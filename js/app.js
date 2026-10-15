@@ -185,9 +185,9 @@ async function exportQuarter(q) {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(il), 'ILMS');
   const fname = `ShippingCheck_Archive_${q}_${ymd(now).replace(/-/g, '')}-${pad(now.getHours())}${pad(now.getMinutes())}.xlsx`;
   XLSX.writeFile(wb, fname);
-  const index = S.data.archIndex;
-  index.exported = { ...(index.exported || {}), [q]: { at: new Date().toISOString(), sig: x.sig, file: fname } };
-  await store.saveArchIndex(index);
+  const info = { at: new Date().toISOString(), sig: x.sig, file: fname };
+  await store.markExported(q, info);
+  S.data.archIndex.exported = { ...(S.data.archIndex.exported || {}), [q]: info };
   toast(`Export ไตรมาส ${q} แล้ว: WH1 ${x.WH1.toLocaleString()} · WH4 ${x.WH4.toLocaleString()} แถว · ILMS ${il.length} คัน — ตรวจไฟล์แล้วกดยืนยันลบ`, false, 10000);
   renderArchive();
 }
@@ -196,6 +196,9 @@ async function deleteQuarter(q) {
   if (!x || !x.due || !x.exported) return;
   if (!confirm(`ลบข้อมูลไตรมาส ${q} ออกจาก Firebase?\nWH1 ${x.WH1.toLocaleString()} แถว · WH4 ${x.WH4.toLocaleString()} แถว · ILMS ${x.ilms} คัน\n`
     + `(export ไว้แล้วเมื่อ ${fmtShowFull(new Date(x.exported))} — ไฟล์ ${x.file})\nลบแล้วกู้คืนจาก Firebase ไม่ได้`)) return;
+  // the app cannot see whether the file was really saved: make the user confirm they have it
+  const typed = prompt(`ตรวจแล้วว่ามีไฟล์ ${x.file} ในเครื่องและเปิดได้\nพิมพ์ ${q} เพื่อยืนยันการลบ`);
+  if ((typed || '').trim().toUpperCase() !== q) { toast('ยกเลิกการลบ (พิมพ์ไม่ตรง)'); return; }
   toast(`กำลังลบไตรมาส ${q}…`, false, 120000);
   await store.deleteArchiveDays(x.days, S.data.archIndex);
   const keepIlms = (S.data.ilms.data || []).filter((r) => !r.dt || quarterOf(r.dt.slice(0, 10)) !== q);
@@ -228,14 +231,17 @@ function renderArchive() {
   banner.hidden = !admin || !due.length;
   if (!banner.hidden) {
     banner.innerHTML = `<b>ถึงรอบล้างข้อมูลเก่า:</b> ไตรมาส ${due.map((x) => x.q).join(', ')}
-      ${due.every((x) => x.exported) ? '— export แล้ว ตรวจไฟล์แล้วกดยืนยันลบ' : '— กำลัง export เป็น Excel อัตโนมัติ'}
+      ${due.every((x) => x.exported) ? '— export แล้ว ตรวจไฟล์แล้วกดยืนยันลบ'
+        : S.autoFailed ? '— export อัตโนมัติไม่สำเร็จ กด Export ในหน้าข้อมูล' : '— กำลัง export เป็น Excel อัตโนมัติ'}
       <a href="#data" class="btn ghost sm">ไปที่หน้าข้อมูล</a>`;
   }
 }
 // rebuild the truck history for Est from every archived day + active data (one archive day at a time)
 async function rebuildHist() {
   const idx = S.data.archIndex || {};
-  const hist = { WH1: {}, WH4: {}, links: {} };
+  const prev = S.hist || {};
+  // start from the saved history so trucks of quarters already deleted from Firebase are kept
+  const hist = { WH1: { ...(prev.WH1 || {}) }, WH4: { ...(prev.WH4 || {}) }, links: {} };
   for (const wh of WHS) {
     const days = Object.keys(idx[wh] || {}).sort();
     const acc = truckAcc();
@@ -244,8 +250,9 @@ async function rebuildHist() {
       truckAccAdd(acc, await store.loadArchiveDay(wh, days[i]));
     }
     truckAccAdd(acc, S.data[wh].data || []);
-    hist[wh] = truckAccDone(acc);
-    hist.links[wh] = truckAccLinks(acc);
+    Object.assign(hist[wh], truckAccDone(acc)); // rebuilt trucks replace their old summary
+    const old = (prev.links && prev.links[wh]) || { parts: {}, sups: {} }, ln = truckAccLinks(acc);
+    hist.links[wh] = { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } };
   }
   await store.saveTruckHist(hist, { WH1: Object.keys(hist.WH1).length, WH4: Object.keys(hist.WH4).length, rebuilt: new Date().toISOString() });
   toast(`สร้างสรุปรถใหม่แล้ว: WH1 ${Object.keys(hist.WH1).length.toLocaleString()} คัน · WH4 ${Object.keys(hist.WH4).length.toLocaleString()} คัน`, false, 9000);
@@ -254,11 +261,15 @@ async function rebuildHist() {
 
 // auto: when a signed-in user opens the app and a quarter is due but not exported yet, export it (once per visit)
 async function autoExport() {
-  if (!S.data || !S.user) return;
+  if (!S.data || !S.user || S.autoRunning) return;
+  S.autoRunning = true;
+  try { await autoExportRun(); } finally { S.autoRunning = false; }
+}
+async function autoExportRun() {
   S.autoTried = S.autoTried || new Set(); // each quarter is tried once per visit
   for (const x of quarters().filter((y) => y.due && !y.exported && !S.autoTried.has(`${y.q}|${y.sig}`))) {
     S.autoTried.add(`${x.q}|${x.sig}`);
-    try { await exportQuarter(x.q); } catch (e) { toast('Export อัตโนมัติไม่สำเร็จ: ' + e.message, true, 9000); }
+    try { await exportQuarter(x.q); } catch (e) { S.autoFailed = true; renderArchive(); toast('Export อัตโนมัติไม่สำเร็จ: ' + e.message, true, 9000); }
   }
 }
 
@@ -287,12 +298,12 @@ function renderSources() {
     ? `${esc(meta.fileName || '')}<br>อัปเดต ${fmtShowFull(new Date(meta.updatedAt))} · ${extra}`
     : 'ยังไม่มีข้อมูล');
   const sl = S.data.slide.meta;
-  $('#srcSlide .src-meta').innerHTML = m(sl, sl ? `${sl.count.toLocaleString()} Order (มีวันเวลาใหม่ ${sl.valid.toLocaleString()})` : '');
+  $('#srcSlide .src-meta').innerHTML = m(sl, sl ? `${esc(Number(sl.count).toLocaleString())} Order (มีวันเวลาใหม่ ${esc(Number(sl.valid).toLocaleString())})` : '');
   $('#srcSlide').classList.toggle('ok', !!sl);
   $('#srcWMS .src-meta').innerHTML = WHS.map((wh) => {
     const mt = S.data[wh].meta;
-    return `<b>${wh}</b> ` + (mt ? `${esc(mt.fileName || '')}<br>อัปเดต ${fmtShowFull(new Date(mt.updatedAt))} · ${mt.count.toLocaleString()} แถว`
-      + (mt.kept ? ` (เก็บที่ส่งแล้วจากรอบก่อน ${mt.kept})` : '') : 'ยังไม่มีข้อมูล');
+    return `<b>${wh}</b> ` + (mt ? `${esc(mt.fileName || '')}<br>อัปเดต ${fmtShowFull(new Date(mt.updatedAt))} · ${esc(Number(mt.count).toLocaleString())} แถว`
+      + (mt.kept ? ` (เก็บที่ส่งแล้วจากรอบก่อน ${esc(mt.kept)})` : '') : 'ยังไม่มีข้อมูล');
   }).join('<br>');
   $('#srcWMS').classList.toggle('ok', WHS.some((wh) => !!S.data[wh].meta));
   const ai = S.data.archIndex || {};
@@ -543,7 +554,8 @@ function renderTrips(list, rows) {
   const other = [...new Set(rows.map((r) => r.sn).filter((sn) => sn && !inList.has(sn)))];
   $('#tripOther').innerHTML = other.length ? `ไม่นับรวม: รถของกะอื่น <b>${other.length}</b> คัน ที่ขนของซึ่ง Due อยู่ในช่วงนี้ (ส่งก่อน/หลังกะ) —
     ${other.sort().slice(0, 12).map((sn) => `<a href="#" data-sn="${esc(sn)}">${esc(sn)}</a>`).join(', ')}${other.length > 12 ? ' …' : ''}` : '';
-  const noRows = list.filter((x) => !rows.some((r) => r.sn === x.sn));
+  const rowSn = new Set(rows.map((r) => r.sn));
+  const noRows = list.filter((x) => !rowSn.has(x.sn));
   if (noRows.length) {
     $('#tripOther').innerHTML += `${other.length ? '<br>' : ''}นับรวมแล้ว: รถ <b>${noRows.length}</b> คันของกะนี้ที่ขนเฉพาะของ Due นอกช่วงนี้ (ส่งล่วงหน้า) — `
       + noRows.map((x) => `<a href="#" data-sn="${esc(x.sn)}">${esc(x.sn)}</a>`).join(', ');
@@ -561,7 +573,8 @@ function renderTrips(list, rows) {
       <td class="wins">${esc([...x.wins].sort().join(', '))}</td>
       <td class="n">${n0(x.p.size)} / ${n0(x.r.size)}</td><td class="n">${x.box.toLocaleString()}</td>
       <td class="t">${dueRange(x.dueStart, x.dueEnd)}</td>
-      <td class="t">${x.dep ? `${fmtShow(x.dep)} <span class="src-tag ${x.src === 'ILMS' ? 'ilms' : ''}">${x.src}</span>` : '<span class="z">-</span>'}</td>
+      <td class="t">${x.dep && x.left ? `${fmtShow(x.dep)} <span class="src-tag ${x.src === 'ILMS' ? 'ilms' : ''}">${x.src}</span>`
+        : x.dep ? `<span class="hint">กำหนด ${fmtShow(x.dep)}</span>` : '<span class="z">-</span>'}</td>
       <td class="n">${lateCell(x)}</td><td>${tripStatus(x)}</td></tr>`).join('')
       || `<tr><td colspan="${cols}" class="hint">${anySn || !rows.length ? 'ไม่มีรถในช่วงเวลานี้'
         : 'ไฟล์ WMS ที่อัปโหลดไว้ยังไม่มีคอลัมน์ Shipping No. (AC) — อัปโหลดไฟล์ใหม่'}</td></tr>`}</tbody>`;
@@ -616,6 +629,7 @@ function renderEst(all, scope) {
         <td class="n">${g.n}</td><td class="n">${g.own ? f1(g.mean) : `<span class="hint">${f1(g.mean)} (ค่าเฉลี่ย WH)</span>`}</td>
         <td class="n">${f1(g.cap.D)}<div class="est-u">${g.D.length} คัน</div></td><td class="n">${f1(g.cap.N)}<div class="est-u">${g.N.length} คัน</div></td></tr>`).join('')}</tbody></table></div></details>`;
     if (!est.groups.length) return `<section class="panel"><div class="panel-h"><h2>${wh}</h2></div><p class="hint">ไม่มีงานค้างในช่วงเวลานี้</p>${ref}</section>`;
+    if (!model.whMean) return `<section class="panel"><div class="panel-h"><h2>${wh}</h2></div><p class="hint">ยังไม่มีประวัติรถที่ Confirm แล้ว จึงยังประมาณการไม่ได้ — อัปโหลด WMS ที่มีรายการ Confirm และ Shipping No. ก่อน</p></section>`;
     // whole trucks: total = ceil(sum of decimals), shared out to cells by largest remainder (cells add up to the total)
     const cellList = est.groups.flatMap((o) => [...o.cells.values()]);
     const alloc = allocateWhole(cellList.map((x) => x.est));
@@ -644,7 +658,7 @@ function renderEst(all, scope) {
           <div class="est-v${x.n ? '' : ' zero'}">${x.n} <small>คัน</small></div><div class="est-u">${f1(x.est)} · ${x.p.size}P ${x.r.size}R</div></td>`;
       }).join('');
       return `<tr><td class="grp">${chipList(g.docks, o.openDocks)}${g.isNew ? '<span class="src-tag">ไม่มีในประวัติ</span>' : ''}
-          ${o.via.size ? `<span class="src-tag">บางพาเลทจัดกลุ่มจาก ${[...o.via].filter((v) => v !== 'new').map((v) => (v === 'Part' ? 'Part No.' : v)).join(' / ')}</span>` : ''}
+          ${[...o.via].some((v) => v !== 'new') ? `<span class="src-tag">บางพาเลทจัดกลุ่มจาก ${[...o.via].filter((v) => v !== 'new').map((v) => (v === 'Part' ? 'Part No.' : v)).join(' / ')}</span>` : ''}
           <div class="gwin">${chipList(g.windows, o.openWins)}</div></td>
         <td class="n">D ${f1(g.cap.D)} · N ${f1(g.cap.N)}<div class="est-u">${g.own ? `${g.n} คัน` : 'ค่าเฉลี่ย WH'}</div></td>
         ${cells}<td class="n"><b>${dn}</b> คัน<div class="est-u">${f1(de)} · ${du} หน่วย</div></td></tr>`;
@@ -793,9 +807,12 @@ async function onUpload(e) {
         const oldRows = (latest[wh] && latest[wh].data) || [];
         // rows of this file that may already be archived: load those archive days to lock their keys
         const days = [...new Set(split[wh].map(archDay))].filter((d) => index[wh] && index[wh][d]);
-        const archivedKeys = new Set();
-        for (const d of days) (await store.loadArchiveDay(wh, d)).forEach((r) => archivedKeys.add(r.k));
-        const m = mergeWms(oldRows, split[wh], keepDays, new Date(), archivedKeys);
+        const archived = new Map();
+        for (const d of days) for (const r of await store.loadArchiveDay(wh, d)) {
+          if (!archived.has(r.k)) archived.set(r.k, []);
+          archived.get(r.k).push(r);
+        }
+        const m = mergeWms(oldRows, split[wh], keepDays, new Date(), archived);
         if (m.toArchive.length) { // archive first: if the next write fails, the rows still exist in one place
           const byDay = new Map();
           for (const r of m.toArchive) { const d = archDay(r); if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push(r); }
@@ -856,7 +873,7 @@ function drawRules() {
           <input type="number" class="sh-h" min="0" step="1" value="${Math.floor(Math.abs(g.shift || 0) / 60)}"> ชม.
           <input type="number" class="sh-m" min="0" max="59" step="1" value="${Math.abs(g.shift || 0) % 60}"> นาที</div>`
       : `<div class="rmap"><span class="hd">Original Due (WMS)</span><span class="hd">Slide Due</span><span></span>
-      ${g.map.map((m, mi) => `<input type="time" class="orig" data-m="${mi}" value="${m.orig}"><input type="time" class="slide" data-m="${mi}" value="${m.slide}">
+      ${g.map.map((m, mi) => `<input type="time" class="orig" data-m="${mi}" value="${esc(m.orig)}"><input type="time" class="slide" data-m="${mi}" value="${esc(m.slide)}">
         <button type="button" class="icon-btn admin-only" data-delm="${gi}:${mi}" title="ลบแถว">✕</button>`).join('')}
     </div>
     <button type="button" class="btn ghost admin-only" data-addm="${gi}" style="margin-top:6px">+ เพิ่มเวลา</button>`;

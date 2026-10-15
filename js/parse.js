@@ -85,8 +85,8 @@ export function timePart(v, useLast = false) {
   if (v === null || v === undefined || v === '') return null;
   if (v instanceof Date) return v.getHours() * 60 + v.getMinutes();
   if (typeof v === 'number') {
-    const frac = v - Math.floor(v);
-    return Math.round(frac * 1440) % 1440;
+    const secs = Math.round((v - Math.floor(v)) * 86400); // whole seconds, then floor to the minute
+    return Math.floor(secs / 60) % 1440;                    // (23:59:30 stays 23:59, not 00:00)
   }
   const s = String(v).trim();
   if (!s) return null;
@@ -102,7 +102,8 @@ export function combine(dateV, timeV) {
 }
 
 export const isAllZero = (s) => { s = String(s ?? '').trim(); return s.length > 0 && /^0+$/.test(s); };
-const str = (v) => (v === null || v === undefined ? '' : String(v).trim());
+// cell -> trimmed text; Excel-style ="..." wrappers (used to keep leading zeros in CSV) are removed
+const str = (v) => (v === null || v === undefined ? '' : String(v).trim().replace(/^="(.*)"$/, '$1'));
 const norm = (s) => str(s).toLowerCase().replace(/[\s._﻿]/g, '');
 
 // ---------- CSV ----------

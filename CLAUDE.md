@@ -8,7 +8,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 - Data: Firebase Firestore project `plandelivery-6ef10` (Spark free plan — keep reads/writes low).
 - Hosting: Netlify connected to this GitHub repo; every push to `main` deploys (`netlify.toml`).
 - **Do not push to `main` until the user has seen screenshots and approved.** Work on the feature branch.
-- Auth: Firebase Email/Password. Anyone can view; only signed-in users can upload / edit rules (`firestore.rules`).
+- Auth: Firebase Email/Password. Anyone can view; only emails in the `isEditor()` allow-list in `firestore.rules` can write
+  (the rules file must be published in the Firebase console; self sign-up should be disabled there).
 - SheetJS (`xlsx@0.18.5` from jsdelivr) parses Excel; CSV is parsed by our own parser (keeps 24-digit RFID as text).
 - `firebase-config.js` with empty `apiKey` = DEMO mode (localStorage only) — useful for local testing.
 
@@ -21,9 +22,13 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
   `truckhist_meta` + `_c*` = compact truck summaries for Est
   `{WH1: {sn: {v:2, s, d, p, r, n: {'Dock|Window': [pallets, racks]}}}, WH4: {...}, links: {WH1: {parts: {part: node}, sups: {...}}}}`
   (~0.5 MB for 2.5 months), updated on every WMS upload (max per Dock|Window), kept 365 days, NOT removed by the quarterly
-  delete. Data page button "สร้างสรุปรถใหม่จากประวัติทั้งหมด" rebuilds it from every archive day (one day at a time).
+  delete. Data page button "สร้างสรุปรถใหม่จากประวัติทั้งหมด" rebuilds it from every archive day (one day at a time),
+  merged over the saved history so trucks of deleted quarters are kept.
   Viewers load the archive only for the days being viewed (±1 day).
-  Payloads are JSON split into ≤700k-char chunk docs so a page load is ~10 reads. Viewers watch only the meta docs.
+  Payloads are JSON split into ≤900 KB (UTF-8 bytes) chunk docs named `<prefix>_<cid>_c<i>` (old saves: `<prefix>_c<i>`);
+  new chunks are written first (in batches ≤ 8 MB / 400 ops), then the meta doc (`cid`, `version`), then old chunks are
+  deleted — a failed save keeps the old data; readers retry if a chunk's `v` ≠ meta.version. `arch_index` is updated
+  field by field (`mergeDoc`, setDoc merge) so concurrent devices don't overwrite each other. Viewers watch only the meta docs.
 - `js/app.js` — UI (Thai labels), uploads, filters, rules dialog, Excel export.
   Pages via URL hash: `#overview`, `#window`, `#trucks`, `#est`, `#detail`, `#data` (uploads + rules). Filter bar is shared.
 
@@ -45,8 +50,10 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 5. **Pallet / Rack** = distinct `Pallet No.`; RFID No. all zeros → Rack, otherwise Pallet. Boxes = sum of `Recept Box Count`.
 6. **Uploads**: DataSlide upload replaces all old slide data. WMS is ONE file for both warehouses, split by
    Window Name (`1…` → WH1, `4…` → WH4, other rows skipped with a warning); a warehouse with no rows in the file
-   keeps its old data. **Nothing shipped is ever deleted.** Row identity = `Order|Part|Pallet|Recept Output No.`
-   (an order can have several Shipping No.; duplicate keys are handled as a group).
+   keeps its old data. **Nothing CONFIRMED is ever deleted.** Row identity = `Order|Part|Pallet|Recept Output No.`
+   (an order can have several Shipping No.). Several lines can share a key: final lines (CONFIRMED + archived) stay as
+   they are, a new line identical to one (Shipping No. + boxes + quantity) is skipped, and new lines are only added beyond
+   the number of final lines (so a newly confirmed sibling is added, an echo of a final line is not).
    - Shipping Confirm `CONFIRMED` = final. CONFIRMED rows (and anything already archived) are LOCKED and kept forever:
      a new file never changes them.
    - Every other row (open, scanned, or shipped-but-not-confirmed) is provisional and follows the latest file:
@@ -58,7 +65,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    confirmed WMS rows, other trucks take the newer file's values.
    **Quarterly export + delete:** Firebase keeps the current + previous calendar quarter. Older quarters are exported
    to Excel automatically when a signed-in user opens the app (sheets WH1, WH4, ILMS), then deleted only after the
-   user confirms. A quarter counts as exported only if row counts still match the export (`arch_index.exported[q].sig`);
+   user confirms and types the quarter code. A quarter counts as exported only if row counts still match the export (`arch_index.exported[q].sig`);
    new rows after an export require a new export. No server: there is no background scheduler.
 7. View filter: start/end datetime, end minute inclusive (shift buttons day 07:30–19:59 / night 20:00–07:29) + optional backlog of open rows due before start.
    Second mode "วันที่ส่ง (Shipping No.)": pick a ship date + shift (ALL / D / N); shows only rows and trucks whose

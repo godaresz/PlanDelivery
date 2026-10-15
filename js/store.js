@@ -3,7 +3,8 @@
 // per load, which keeps well inside the Firebase free (Spark) quota.
 import { firebaseConfig, COLLECTION } from '../firebase-config.js';
 
-const CHUNK = 700000; // chars per document (Firestore limit is 1 MiB per document)
+const CHUNK_BYTES = 900000;   // UTF-8 bytes per chunk document (Firestore limit is 1 MiB per document)
+const BATCH_BYTES = 8000000;  // bytes per batch commit (Firestore limit is 10 MiB per request)
 export const isDemo = !firebaseConfig || !firebaseConfig.apiKey;
 
 let db, auth, fs, fa;
@@ -48,6 +49,23 @@ async function getDoc(id) {
   return snap.exists() ? snap.data() : null;
 }
 
+// deep-merge a document; a null leaf deletes that field (used for the shared arch_index)
+export async function mergeDoc(id, patch) {
+  if (isDemo) {
+    const cur = (await getDoc(id)) || {};
+    const apply = (o, p) => { for (const [k, v] of Object.entries(p)) {
+      if (v === null) delete o[k];
+      else if (typeof v === 'object' && !Array.isArray(v)) { o[k] = o[k] && typeof o[k] === 'object' ? o[k] : {}; apply(o[k], v); }
+      else o[k] = v;
+    } };
+    apply(cur, patch);
+    return writeDocs([[id, cur]], []);
+  }
+  const conv = (p) => Object.fromEntries(Object.entries(p).map(([k, v]) => [k,
+    v === null ? fs.deleteField() : typeof v === 'object' && !Array.isArray(v) ? conv(v) : v]));
+  await fs.setDoc(fs.doc(db, COLLECTION, id), conv(patch), { merge: true });
+}
+
 async function writeDocs(sets, deletes) {
   if (isDemo) {
     try {
@@ -59,37 +77,60 @@ async function writeDocs(sets, deletes) {
     emit();
     return;
   }
-  const batch = fs.writeBatch(db);
-  for (const [id, data] of sets) batch.set(fs.doc(db, COLLECTION, id), data);
-  for (const id of deletes) batch.delete(fs.doc(db, COLLECTION, id));
-  await batch.commit();
+  // split into several commits so each stays under the request size / 500-write limits
+  const enc = new TextEncoder();
+  let batch = fs.writeBatch(db), bytes = 0, ops = 0;
+  const flush = async () => { if (ops) await batch.commit(); batch = fs.writeBatch(db); bytes = 0; ops = 0; };
+  for (const [id, data] of sets) {
+    const b = enc.encode(JSON.stringify(data)).length;
+    if (ops && (bytes + b > BATCH_BYTES || ops >= 400)) await flush();
+    batch.set(fs.doc(db, COLLECTION, id), data); bytes += b; ops++;
+  }
+  for (const id of deletes) {
+    if (ops >= 400) await flush();
+    batch.delete(fs.doc(db, COLLECTION, id)); ops++;
+  }
+  await flush();
 }
 
-// save a big payload as meta + chunk docs
+// save a big payload as meta + chunk docs. New chunks get new ids (meta.cid), the meta doc is written last and
+// the old chunks are deleted after it, so a reader never sees a half-written payload and a failed save keeps the old one.
+const chunkIds = (prefix, meta) => Array.from({ length: (meta && meta.chunks) || 0 },
+  (_, i) => (meta.cid ? `${prefix}_${meta.cid}_c${i}` : `${prefix}_c${i}`));
+function splitBytes(json) {
+  const enc = new TextEncoder(), parts = [];
+  let i = 0;
+  while (i < json.length) {
+    let len = Math.min(CHUNK_BYTES, json.length - i);
+    while (enc.encode(json.slice(i, i + len)).length > CHUNK_BYTES) len = Math.floor(len * 0.8);
+    parts.push(json.slice(i, i + len)); i += len;
+  }
+  return parts.length ? parts : [''];
+}
 async function saveChunked(prefix, payload, meta) {
-  const json = JSON.stringify(payload);
-  const parts = [];
-  for (let i = 0; i < json.length; i += CHUNK) parts.push(json.slice(i, i + CHUNK));
-  if (!parts.length) parts.push('');
+  const parts = splitBytes(JSON.stringify(payload));
   const old = await getDoc(prefix + '_meta');
-  const oldN = old ? old.chunks || 0 : 0;
   const version = Date.now() * 1000 + Math.floor(Math.random() * 1000); // unique even for saves in the same ms
-  const sets = parts.map((p, i) => [`${prefix}_c${i}`, { v: version, data: p }]);
-  sets.push([prefix + '_meta', { ...meta, chunks: parts.length, version, updatedAt: new Date().toISOString() }]);
-  const deletes = [];
-  for (let i = parts.length; i < oldN; i++) deletes.push(`${prefix}_c${i}`);
-  await writeDocs(sets, deletes);
+  const cid = 'v' + version.toString(36);
+  const m = { ...meta, chunks: parts.length, cid, version, updatedAt: new Date().toISOString() };
+  await writeDocs(parts.map((p, i) => [`${prefix}_${cid}_c${i}`, { v: version, data: p }]), []);
+  await writeDocs([[prefix + '_meta', m]], []);
+  await writeDocs([], chunkIds(prefix, old));
 }
 
 const cache = {};
-async function loadChunked(prefix) {
+async function loadChunked(prefix, tries = 3) {
   const meta = await getDoc(prefix + '_meta');
   if (!meta) return { meta: null, data: null };
   if (cache[prefix] && cache[prefix].version === meta.version) return { meta, data: cache[prefix].data };
   let json = '';
-  for (let i = 0; i < meta.chunks; i++) {
-    const c = await getDoc(`${prefix}_c${i}`);
-    json += c ? c.data : '';
+  for (const id of chunkIds(prefix, meta)) {
+    const c = await getDoc(id);
+    if (!c || (c.v !== undefined && c.v !== meta.version)) { // a save happened while reading: read again
+      if (tries > 1) return loadChunked(prefix, tries - 1);
+      throw new Error(`ข้อมูล ${prefix} กำลังถูกอัปเดต ลองรีเฟรชอีกครั้ง`);
+    }
+    json += c.data;
   }
   const data = json ? JSON.parse(json) : null;
   cache[prefix] = { version: meta.version, data };
@@ -117,32 +158,35 @@ export async function loadArchiveDay(wh, day) {
   const r = await loadChunked(archId(wh, day));
   return r.data || [];
 }
-// append rows to archive days (existing archived rows are never replaced)
+// append rows to archive days (archived rows are never replaced). Rows are compared by key + Shipping No. + boxes +
+// quantity so a second confirmed line with the same key is still added. The shared index is patched field by field.
+const rowSig = (r) => `${r.k}|${r.sn || ''}|${r.bx}|${r.q}`;
 export async function appendArchive(wh, byDay, index) {
+  const patch = {};
   for (const [day, rows] of byDay) {
     const old = await loadArchiveDay(wh, day);
-    const have = new Set(old.map((r) => r.k));
-    const add = rows.filter((r) => !have.has(r.k));
+    const have = new Map();
+    old.forEach((r) => have.set(rowSig(r), (have.get(rowSig(r)) || 0) + 1));
+    const add = rows.filter((r) => { const n = have.get(rowSig(r)) || 0; if (n) { have.set(rowSig(r), n - 1); return false; } return true; });
     if (!add.length) continue;
     const all = old.concat(add);
     await saveChunked(archId(wh, day), all, { wh, day, count: all.length });
     index[wh] = index[wh] || {};
     index[wh][day] = all.length;
+    patch[day] = all.length;
   }
-  await writeDocs([['arch_index', { ...index, updatedAt: new Date().toISOString() }]], []);
+  if (Object.keys(patch).length) await mergeDoc('arch_index', { [wh]: patch, updatedAt: new Date().toISOString() });
 }
-export const saveArchIndex = (index) => writeDocs([['arch_index', { ...index, updatedAt: new Date().toISOString() }]], []);
+export const markExported = (q, info) => mergeDoc('arch_index', { exported: { [q]: info }, updatedAt: new Date().toISOString() });
 // remove archive days (after they were exported); list = [[wh, 'YYYY-MM-DD'], ...]
 export async function deleteArchiveDays(list, index) {
   for (const [wh, day] of list) {
     const id = archId(wh, day);
     const meta = await getDoc(id + '_meta');
-    const ids = [id + '_meta'];
-    for (let i = 0; i < ((meta && meta.chunks) || 0); i++) ids.push(`${id}_c${i}`);
-    await writeDocs([], ids);
+    await writeDocs([], [...chunkIds(id, meta), id + '_meta']);
     delete cache[id];
     if (index[wh]) delete index[wh][day];
+    await mergeDoc('arch_index', { [wh]: { [day]: null } });
   }
-  await saveArchIndex(index);
 }
 export const saveRules = (rules) => writeDocs([['rules', { ...rules, updatedAt: new Date().toISOString() }]], []);

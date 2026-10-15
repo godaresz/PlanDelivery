@@ -110,7 +110,7 @@ export function parseTrip(sn) {
   const shift = m[5].toUpperCase();
   const start = shift === 'D' ? new Date(y, mo, d, 7, 30) : new Date(y, mo, d, 20, 0);
   const end = shift === 'D' ? new Date(y, mo, d, 20, 0) : new Date(y, mo, d + 1, 7, 30);
-  if (start.getDate() !== d) return null; // invalid date
+  if (start.getDate() !== d || start.getMonth() !== mo) return null; // invalid date (e.g. month 13, 31/02)
   return { date: new Date(y, mo, d), whDigit: m[4], shift, no: m[6], start, end };
 }
 
@@ -262,10 +262,16 @@ export function learnLoadGroups(hist, links = { parts: {}, sups: {} }) {
   // skip shift-days whose average load is < 60% of the median shift-day (incomplete uploads, e.g. before Shipping No.)
   const byDay = new Map();
   for (const t0 of Object.values(hist)) { const t = norm(t0); const k = t.d + t.s; if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(t); }
+  // compared with the median of the same shift (D with D, N with N) so a rack-heavy shift doesn't flag the other one
   const dayMean = [...byDay].map(([k, a]) => [k, a.reduce((x, t) => x + t.p + t.r, 0) / a.length]);
-  const sorted = dayMean.map((x) => x[1]).sort((a, b) => a - b);
-  const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
-  const skipped = sorted.length >= 3 ? dayMean.filter(([, m]) => m < 0.6 * median).map(([k]) => k) : [];
+  const skipped = [];
+  for (const sh of ['D', 'N', '']) {
+    const own = dayMean.filter(([k]) => (k.slice(8) || '') === sh);
+    const sorted = own.map((x) => x[1]).sort((a, b) => a - b);
+    if (sorted.length < 3) continue;
+    const median = sorted[Math.floor(sorted.length / 2)];
+    own.forEach(([k, m]) => { if (m < 0.6 * median) skipped.push(k); });
+  }
   const trucks = [...byDay].filter(([k]) => !skipped.includes(k)).flatMap(([, a]) => a);
   const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
   // rack space factor from pure trucks
@@ -401,23 +407,43 @@ export const archDay = (r) => (r.sh || r.dd || '').slice(0, 10);
 // - every other row follows the latest file: rows missing from it are dropped (e.g. pallets merged / moved before
 //   confirm show up again under the new Pallet No.), changed rows are replaced;
 // - CONFIRMED rows whose day is older than keepDays move to the archive (returned in `toArchive`).
-// archivedKeys: keys already in the archive for the days this file touches.
-export function mergeWms(oldRows, newRows, keepDays, now, archivedKeys = new Set()) {
-  const locked = new Set(archivedKeys);
-  for (const o of oldRows) if (o.cf === 1) locked.add(o.k);
-  const oldMap = new Map(oldRows.map((r) => [r.k, r]));
-  const newKeys = new Set();
+export function mergeWms(oldRows, newRows, keepDays, now, archived = new Map()) {
+  // archived: Map(key -> [archived rows]) for the days this file touches; they are final like CONFIRMED rows.
+  // Several lines can share a key (same Order|Part|Pallet|Recept Output No.); a key is handled as a group:
+  //  - final lines (stored CONFIRMED + archived) are kept untouched;
+  //  - a new line identical to a final line (Shipping No., boxes, quantity) is skipped;
+  //  - other new CONFIRMED lines are added only beyond the number of final lines (a newly confirmed sibling),
+  //    other new open lines only beyond the number of final lines too (so an echo of a final line is never added).
+  const sig = (r) => `${r.sn || ''}|${r.bx}|${r.q}`;
+  const final = new Map(); // key -> final rows
+  for (const o of oldRows) if (o.cf === 1) { if (!final.has(o.k)) final.set(o.k, []); final.get(o.k).push(o); }
+  for (const [k, rs] of archived) { if (!final.has(k)) final.set(k, []); final.get(k).push(...rs); }
+  const byKey = new Map();
+  for (const r of newRows) { if (!byKey.has(r.k)) byKey.set(r.k, []); byKey.get(r.k).push(r); }
   const out = [];
   let skipped = 0;
-  for (const r of newRows) {
-    newKeys.add(r.k);
-    if (locked.has(r.k)) { skipped++; continue; }
-    out.push(r);
+  for (const [k, rs] of byKey) {
+    const fin = final.get(k);
+    if (!fin) { out.push(...rs); continue; }
+    const left = new Map();
+    fin.forEach((f) => left.set(sig(f), (left.get(sig(f)) || 0) + 1));
+    const unmatched = [];
+    for (const r of rs) {
+      const n = left.get(sig(r)) || 0;
+      if (n > 0) { left.set(sig(r), n - 1); skipped++; } else unmatched.push(r);
+    }
+    let allowConf = Math.max(0, rs.filter((r) => r.cf === 1).length - fin.length);
+    let allowOpen = Math.max(0, rs.length - fin.length);
+    for (const r of unmatched.sort((a, b) => b.cf - a.cf)) {
+      if (r.cf === 1 && allowConf > 0) { allowConf--; allowOpen--; out.push(r); }
+      else if (r.cf !== 1 && allowOpen > 0) { allowOpen--; out.push(r); }
+      else skipped++;
+    }
   }
   let kept = 0, dropped = 0;
   for (const o of oldRows) {
-    if (o.cf === 1 && !archivedKeys.has(o.k)) { out.push(o); if (!newKeys.has(o.k)) kept++; continue; }
-    if (!archivedKeys.has(o.k) && !newKeys.has(o.k)) dropped++; // provisional row no longer in WMS
+    if (o.cf === 1) { if (!archived.has(o.k)) { out.push(o); if (!byKey.has(o.k)) kept++; } continue; }
+    if (!byKey.has(o.k)) dropped++; // provisional row no longer in WMS
   }
   const cutoff = new Date(now.getTime() - keepDays * 86400000);
   const cutDay = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, '0')}-${String(cutoff.getDate()).padStart(2, '0')}`;
