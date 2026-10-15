@@ -382,9 +382,38 @@ function tripsInView(whs, viewRows) {
   });
 }
 
-function render() {
+// entrance animations + count-up run on user actions / new data, not on the silent 1-minute refresh
+const calm = matchMedia('(prefers-reduced-motion: reduce)');
+let animT;
+function countUp(root) {
+  const t0 = performance.now(), items = [];
+  root.querySelectorAll('.kpi .val').forEach((el) => {
+    const n = el.firstChild;
+    if (!n || n.nodeType !== 3) return;
+    const m = n.nodeValue.match(/^([\d,]+)(.*)$/s);
+    if (!m) return;
+    const to = +m[1].replace(/,/g, '');
+    if (to > 1) items.push([n, to, m[2]]);
+  });
+  if (!items.length) return;
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / 900), e = 1 - (1 - k) ** 3;
+    for (const [n, to, rest] of items) n.nodeValue = Math.round(to * e).toLocaleString() + rest;
+    if (k < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+function render(quiet = false) {
   syncDates();
   if (!S.data) return;
+  const animate = !quiet && !calm.matches;
+  if (animate) {
+    document.body.classList.add('anim');
+    clearTimeout(animT); animT = setTimeout(() => document.body.classList.remove('anim'), 1500);
+  }
+  try { renderAll(); } finally { if (animate) countUp(document.querySelector(`.page[data-page="${S.page}"]`) || document.body); }
+}
+function renderAll() {
   const all = currentRows();
   const scope = S.wh === 'ALL' ? WHS : [S.wh];
   renderKpis(all, scope);
@@ -740,6 +769,8 @@ function showPage() {
   $$('.page').forEach((el) => { el.hidden = el.dataset.page !== S.page; });
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.page === S.page));
   $('#filterBar').hidden = S.page === 'data';
+  document.body.classList.add('pagein');
+  clearTimeout(showPage.t); showPage.t = setTimeout(() => document.body.classList.remove('pagein'), 1200);
   render();
   window.scrollTo(0, 0);
 }
@@ -968,8 +999,8 @@ function bind() {
     $$('#whTabs .tab').forEach((x) => x.classList.toggle('active', x === t)); saveFilters(); render();
   }));
   let st;
-  $('#fSearch').addEventListener('input', (e) => { clearTimeout(st); st = setTimeout(() => { S.search = e.target.value; S.limit = 300; render(); }, 200); });
-  $('#btnMore').addEventListener('click', () => { S.limit += 300; render(); });
+  $('#fSearch').addEventListener('input', (e) => { clearTimeout(st); st = setTimeout(() => { S.search = e.target.value; S.limit = 300; render(true); }, 200); });
+  $('#btnMore').addEventListener('click', () => { S.limit += 300; render(true); });
   $('#btnExport').addEventListener('click', () => {
     const data = S.lastRows.map((r) => ({
       WH: r.wh, 'Order No.': r.o, Supplier: r.s, 'Part No.': r.p, 'Part Name': r.n, Dock: r.d, 'Window Name': r.w,
@@ -1047,7 +1078,7 @@ async function main() {
   $('#modeBadge').textContent = store.isDemo ? 'โหมดทดลอง (เก็บในเครื่องนี้)' : 'Firebase';
   $('#modeBadge').classList.toggle('demo', store.isDemo);
   tick(); setInterval(tick, 1000);
-  setInterval(render, 60000); // statuses move from pending to overdue as time passes
+  setInterval(() => render(true), 60000); // statuses move from pending to overdue as time passes
   await store.init();
   store.onAuth((u) => {
     S.user = u;
