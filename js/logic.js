@@ -347,14 +347,16 @@ export function learnLoadGroups(hist, links = { parts: {}, sups: {} }) {
 // open (not shipped) rows -> buckets by due day + period, per load group.
 // Each pallet counts once: in the bucket of its earliest due, the group of its first row (Dock|Window, Part, Supplier).
 // est = sum over pallets of (1 for a pallet, rackFactor for a rack) / group load in the shift of its due.
-export function estimateTrucks(openRows, model) {
+// truckPallets (optional, for "estimate vs actual"): Map Shipping No. -> distinct pallets on that truck. A shipped pallet
+// then adds 1 / (pallets on its truck) to the cell's `act`, so the actual trucks are shared out by pallets and add up.
+export function estimateTrucks(openRows, model, truckPallets = null) {
   const pal = new Map();
   for (const r of openRows) {
     if (!r.due) continue;
     const k = r.pl || r.k;
     const x = pal.get(k);
-    if (!x) pal.set(k, { due: r.due, rk: r.rk, box: r.bx, d: r.d, w: r.w, p: r.p, s: r.s });
-    else { x.box += r.bx; if (r.due < x.due) x.due = r.due; }
+    if (!x) pal.set(k, { due: r.due, rk: r.rk, box: r.bx, d: r.d, w: r.w, p: r.p, s: r.s, sn: r.cf === 1 ? r.sn : '' });
+    else { x.box += r.bx; if (r.due < x.due) x.due = r.due; if (!x.sn && r.cf === 1) x.sn = r.sn; }
   }
   const buckets = new Map(), rowsOut = new Map();
   const via = { Window: 0, Part: 0, Supplier: 0, new: 0 };
@@ -367,13 +369,16 @@ export function estimateTrucks(openRows, model) {
     if (!rowsOut.has(g.id)) rowsOut.set(g.id, { group: g, cells: new Map(), openDocks: new Set(), openWins: new Set(), via: new Set() });
     const o = rowsOut.get(g.id);
     o.openDocks.add(pl.d || '-'); o.openWins.add(pl.w || '-'); if (how !== 'Window') o.via.add(how);
-    if (!o.cells.has(bk)) o.cells.set(bk, { p: new Set(), r: new Set(), box: 0, est: 0 });
+    if (!o.cells.has(bk)) o.cells.set(bk, { p: new Set(), r: new Set(), box: 0, est: 0, estS: 0, act: 0, shipped: 0, trucks: new Set() });
     const x = o.cells.get(bk);
     (pl.rk ? x.r : x.p).add(k); x.box += pl.box;
     // shift: from the Window name (xDnn / xNnn) when it has one, else from the due time (back-test: WH4 error 12% -> 6%)
     const ws = String(pl.w || '')[1];
     const cap = g.cap[ws === 'D' || ws === 'N' ? ws : shiftOfTime(pl.due)] || g.mean;
-    x.est += cap ? (pl.rk ? model.rackFactor : 1) / cap : 0;
+    const e = cap ? (pl.rk ? model.rackFactor : 1) / cap : 0;
+    x.est += e;
+    // estS = estimate of the shipped part only, compared with the trucks actually used for it
+    if (truckPallets && pl.sn && truckPallets.get(pl.sn)) { x.act += 1 / truckPallets.get(pl.sn); x.estS += e; x.shipped++; x.trucks.add(pl.sn); }
   }
   for (const o of rowsOut.values()) for (const x of o.cells.values()) x.units = x.p.size + x.r.size;
   const list = [...rowsOut.values()].sort((a, b) => a.group.docks.join().localeCompare(b.group.docks.join()) || a.group.windows[0].localeCompare(b.group.windows[0]));

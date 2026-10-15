@@ -608,6 +608,20 @@ function renderOverview(rows, trips) {
 const PNAME = Object.fromEntries(PERIODS.map(([k, n, t]) => [k, [n, t]]));
 const f1 = (v) => (v === null || v === undefined ? '-' : v.toFixed(1));
 function renderEst(all, scope) {
+  const cmp = S.estMode === 'cmp';
+  $$('#estMode .tab').forEach((t) => t.classList.toggle('active', t.dataset.em === (cmp ? 'cmp' : 'open')));
+  // compare mode learns only from trucks before the range, so the estimate is a fair prediction
+  const startKey = (S.mode === 'sn' ? (S.snDate || '') : S.view.start ? ymd(S.view.start) : '').replace(/-/g, '');
+  const before = (h) => Object.fromEntries(Object.entries(h).filter(([, t]) => !startKey || (t.d && t.d < startKey)));
+  const truckPallets = new Map();
+  if (cmp) {
+    const sets = new Map();
+    for (const wh of WHS) for (const r of S.view.full[wh]) if (r.sn && r.cf === 1) {
+      if (!sets.has(r.sn)) sets.set(r.sn, new Set()); sets.get(r.sn).add(r.pl || r.k);
+    }
+    sets.forEach((v, k) => truckPallets.set(k, v.size));
+  }
+  let actTotal = 0, estShipped = 0, openUnits = 0; const actTrucks = new Set();
   let totalTrucks = 0, totalEst = 0, totalP = 0, totalR = 0, totalBox = 0;
   const perPeriod = { T: 0, M: 0, A: 0, E: 0 };
   const notes = [];
@@ -615,10 +629,11 @@ function renderEst(all, scope) {
   const html = scope.map((wh) => {
     const liveAcc = truckAccAdd(truckAcc(), S.view.full[wh]), live = truckAccLinks(liveAcc);
     const saved = (S.hist && S.hist.links && S.hist.links[wh]) || { parts: {}, sups: {} };
-    const model = learnLoadGroups(mergeTruckHist((S.hist && S.hist[wh]) || {}, truckAccDone(liveAcc)),
-      { parts: { ...saved.parts, ...live.parts }, sups: { ...saved.sups, ...live.sups } });
-    const open = all[wh].filter((r) => !r.done);
-    const est = estimateTrucks(open, model);
+    let hist = mergeTruckHist((S.hist && S.hist[wh]) || {}, truckAccDone(liveAcc));
+    if (cmp) hist = before(hist);
+    const model = learnLoadGroups(hist, { parts: { ...saved.parts, ...live.parts }, sups: { ...saved.sups, ...live.sups } });
+    const work = cmp ? all[wh] : all[wh].filter((r) => !r.done);
+    const est = estimateTrucks(work, model, cmp ? truckPallets : null);
     const known = [...model.groups.values()].filter((g) => !g.isNew);
     const d8 = (x) => (x ? `${x.slice(6, 8)}/${x.slice(4, 6)}/${x.slice(0, 4)}` : '-');
     notes.push(`${wh}: ${known.length} กลุ่ม จากรถ ${model.trucks} คัน (${d8(model.from)} – ${d8(model.to)}) · เฉลี่ยกะเช้า ${f1(model.whShift.D)} · กะดึก ${f1(model.whShift.N)} พาเลท/คัน · Rack = ${model.rackFactor.toFixed(2)} พาเลท`
@@ -628,17 +643,22 @@ function renderEst(all, scope) {
       ${known.sort((a, b) => b.n - a.n).map((g) => `<tr><td>${chipList(g.docks)}</td><td class="wins">${chipList(g.windows)}</td>
         <td class="n">${g.n}</td><td class="n">${g.own ? f1(g.mean) : `<span class="hint">${f1(g.mean)} (ค่าเฉลี่ย WH)</span>`}</td>
         <td class="n">${f1(g.cap.D)}<div class="est-u">${g.D.length} คัน</div></td><td class="n">${f1(g.cap.N)}<div class="est-u">${g.N.length} คัน</div></td></tr>`).join('')}</tbody></table></div></details>`;
-    if (!est.groups.length) return `<section class="panel"><div class="panel-h"><h2>${wh}</h2></div><p class="hint">ไม่มีงานค้างในช่วงเวลานี้</p>${ref}</section>`;
+    if (!est.groups.length) return `<section class="panel"><div class="panel-h"><h2>${wh}</h2></div><p class="hint">${cmp ? 'ไม่มีงานในช่วงเวลานี้' : 'ไม่มีงานค้างในช่วงเวลานี้'}</p>${ref}</section>`;
     if (!model.whMean) return `<section class="panel"><div class="panel-h"><h2>${wh}</h2></div><p class="hint">ยังไม่มีประวัติรถที่ Confirm แล้ว จึงยังประมาณการไม่ได้ — อัปโหลด WMS ที่มีรายการ Confirm และ Shipping No. ก่อน</p></section>`;
     // whole trucks: total = ceil(sum of decimals), shared out to cells by largest remainder (cells add up to the total)
     const cellList = est.groups.flatMap((o) => [...o.cells.values()]);
     const alloc = allocateWhole(cellList.map((x) => x.est));
     cellList.forEach((x, i) => { x.n = alloc.out[i]; });
-    const tot = new Map(est.buckets.map((b) => [b.key, { p: 0, r: 0, est: 0, n: 0 }]));
+    const tot = new Map(est.buckets.map((b) => [b.key, { p: 0, r: 0, est: 0, n: 0, act: 0, estS: 0, trucks: new Set() }]));
+    let whAct = 0, whEstS = 0; const whTrucksAct = new Set();
     for (const o of est.groups) for (const [bk, x] of o.cells) {
-      const t = tot.get(bk); t.p += x.p.size; t.r += x.r.size; t.est += x.est; t.n += x.n;
+      const t = tot.get(bk); t.p += x.p.size; t.r += x.r.size; t.est += x.est; t.n += x.n; t.act += x.act; t.estS += x.estS;
+      whEstS += x.estS;
+      x.trucks.forEach((sn) => { t.trucks.add(sn); whTrucksAct.add(sn); actTrucks.add(sn); });
+      whAct += x.act; openUnits += x.units - x.shipped;
       totalP += x.p.size; totalR += x.r.size; totalBox += x.box;
     }
+    actTotal += whAct; estShipped += whEstS;
     let whEst = 0;
     for (const b of est.buckets) { const t = tot.get(b.key); whEst += t.est; perPeriod[b.period] += t.n; }
     totalEst += whEst;
@@ -648,32 +668,39 @@ function renderEst(all, scope) {
     const head = est.buckets.map((b) => `<th class="n est-h">${fmtShow(new Date(b.day + 'T00:00')).slice(0, 5)} <b>${PNAME[b.period][0]}</b><small>${PNAME[b.period][1]}</small></th>`).join('');
     const body = est.groups.map((o) => {
       const g = o.group;
-      let du = 0, de = 0, dn = 0;
+      let du = 0, de = 0, dn = 0, da = 0, ds = 0;
       const cells = est.buckets.map((b) => {
         const x = o.cells.get(b.key);
         if (!x) return '<td class="n"><span class="z">-</span></td>';
-        du += x.units; de += x.est; dn += x.n;
+        du += x.units; de += x.est; dn += x.n; da += x.act; ds += x.estS;
         const a = Math.min(1, (x.est || 0) / maxEst);
         return `<td class="n est-c" style="background:rgba(191,219,254,${(0.15 + a * 0.85).toFixed(2)})">
-          <div class="est-v${x.n ? '' : ' zero'}">${x.n} <small>คัน</small></div><div class="est-u">${f1(x.est)} · ${x.p.size}P ${x.r.size}R</div></td>`;
+          <div class="est-v${x.n ? '' : ' zero'}">${x.n} <small>คัน</small></div>${cmp ? cmpLine(x.estS, x.act) : ''}<div class="est-u">${f1(x.est)} · ${x.p.size}P ${x.r.size}R</div></td>`;
       }).join('');
       return `<tr><td class="grp">${chipList(g.docks, o.openDocks)}${g.isNew ? '<span class="src-tag">ไม่มีในประวัติ</span>' : ''}
           ${[...o.via].some((v) => v !== 'new') ? `<span class="src-tag">บางพาเลทจัดกลุ่มจาก ${[...o.via].filter((v) => v !== 'new').map((v) => (v === 'Part' ? 'Part No.' : v)).join(' / ')}</span>` : ''}
           <div class="gwin">${chipList(g.windows, o.openWins)}</div></td>
         <td class="n">D ${f1(g.cap.D)} · N ${f1(g.cap.N)}<div class="est-u">${g.own ? `${g.n} คัน` : 'ค่าเฉลี่ย WH'}</div></td>
-        ${cells}<td class="n"><b>${dn}</b> คัน<div class="est-u">${f1(de)} · ${du} หน่วย</div></td></tr>`;
+        ${cells}<td class="n"><b>${dn}</b> คัน${cmp ? cmpLine(ds, da) : ''}<div class="est-u">${f1(de)} · ${du} หน่วย</div></td></tr>`;
     }).join('');
-    const sumRow = est.buckets.map((b) => { const t = tot.get(b.key); return `<td class="n"><b>${t.n}</b> คัน<div class="est-u">${f1(t.est)} · ${t.p}P ${t.r}R</div></td>`; }).join('');
+    const sumRow = est.buckets.map((b) => { const t = tot.get(b.key); return `<td class="n"><b>${t.n}</b> คัน${cmp ? cmpLine(t.estS, t.act) : ''}<div class="est-u">${f1(t.est)} · ${t.p}P ${t.r}R</div></td>`; }).join('');
     return `<section class="panel"><div class="panel-h"><h2>${wh}</h2>
-        <span class="hint">ต้องใช้รถประมาณ <b>${whTrucks}</b> คัน (${f1(whEst)})</span></div>
+        <span class="hint">${cmp ? `Est ทั้งงาน <b>${whTrucks}</b> คัน (${f1(whEst)}) · ส่วนที่ส่งแล้ว Est ${f1(whEstS)} เทียบใช้จริง <b>${f1(whAct)}</b> คัน · ${diffTxt(whEstS, whAct)}`
+          : `ต้องใช้รถประมาณ <b>${whTrucks}</b> คัน (${f1(whEst)})`}</span></div>
       <div class="table-wrap"><table class="tbl est"><thead><tr><th>กลุ่มที่ไปด้วยกัน<br><small>Dock · Window (สีเข้ม = มีงานค้าง)</small></th>
         <th class="n">พาเลท/คัน<br><small>กะเช้า D · กะดึก N</small></th>${head}<th class="n">รวม</th></tr></thead>
       <tbody>${body}</tbody>
-      <tfoot><tr><td>Est รถ (คัน)</td><td></td>${sumRow}<td class="n"><b>${whTrucks}</b> คัน<div class="est-u">${f1(whEst)}</div></td></tr></tfoot></table></div>${ref}</section>`;
+      <tfoot><tr><td>${cmp ? 'Est / ใช้จริง (คัน)' : 'Est รถ (คัน)'}</td><td></td>${sumRow}<td class="n"><b>${whTrucks}</b> คัน${cmp ? cmpLine(whEstS, whAct) : ''}<div class="est-u">${f1(whEst)}</div></td></tr></tfoot></table></div>${ref}</section>`;
   }).join('');
   $('#estBody').innerHTML = html;
   const tile = (cls, lbl, v, det = '') => `<div class="kpi ${cls}"><div class="lbl">${lbl}</div><div class="val">${v}</div><div class="det">${det}</div></div>`;
-  $('#estTiles').innerHTML = [
+  $('#estTiles').innerHTML = cmp ? [
+    tile('trip', 'Est (ทั้งงานในช่วงนี้)', `${totalTrucks} <small>คัน</small>`, `ทศนิยม ${f1(totalEst)} · เรียนรู้จากข้อมูลก่อนช่วงนี้`),
+    tile('done', 'ใช้จริง (ส่วนที่ส่งแล้ว)', `${f1(actTotal)} <small>คัน</small>`, `แบ่งตามสัดส่วนพาเลท · รถที่เกี่ยวข้อง ${actTrucks.size} คัน`),
+    tile(Math.abs(estShipped - actTotal) <= 0.1 * Math.max(actTotal, 1) ? 'done' : 'overdue', 'ต่าง (Est − จริง) ส่วนที่ส่งแล้ว',
+      `${estShipped - actTotal >= 0 ? '+' : ''}${f1(estShipped - actTotal)} <small>คัน</small>`, `Est ${f1(estShipped)} · ${diffTxt(estShipped, actTotal)}`),
+    tile('pending', 'งานในช่วงนี้', `${totalP + totalR} <small>หน่วย</small>`, openUnits ? `ยังไม่ส่ง ${openUnits} หน่วย — ยอดจริงยังไม่ครบ` : 'ส่งครบแล้ว'),
+  ].join('') : [
     tile('trip', 'Est รถที่ต้องใช้', `${totalTrucks} <small>คัน</small>`, `${scope.join(' + ')} · ทศนิยม ${f1(totalEst)}`),
     tile('pending', 'งานค้าง (ยังไม่ Shipping)', `${totalP + totalR} <small>หน่วย</small>`, `${totalP} Pallet · ${totalR} Rack · ${totalBox.toLocaleString()} กล่อง`),
     ...PERIODS.map(([k, n, t]) => tile('scan', `ช่วง${n}`, `${perPeriod[k]} <small>คัน</small>`, t)),
@@ -684,6 +711,19 @@ function renderEst(all, scope) {
     Rack คิดพื้นที่เทียบ Pallet ตามประวัติ (รถขน Pallet ล้วน ÷ รถขน Rack ล้วน) · Window ที่ไม่เคยมีในประวัติ จัดกลุ่มจาก Part No. แล้ว Supplier ·
     จำนวนรถเต็มคัน = ปัดขึ้นจากผลรวมทศนิยมครั้งเดียว แล้วแบ่งลงแต่ละช่องตามเศษที่มากที่สุด (ผลรวมทุกช่องเท่ากับยอดรวม) · ${notes.join(' · ')}`;
   return totalTrucks;
+}
+
+// "จริง 3.0" line for compare mode (green within 10% or 0.5 truck, amber within 20% or 1 truck, red beyond)
+function diffTxt(est, act) {
+  if (!act) return 'ยังไม่มีรถที่ใช้จริง';
+  const d = (est - act) / act;
+  return `${d >= 0 ? 'Est มากกว่า' : 'Est น้อยกว่า'}จริง ${Math.abs(d * 100).toFixed(0)}%`;
+}
+function cmpLine(est, act, trucks) {
+  if (!act && !trucks) return '<div class="cmp z">จริง -</div>';
+  const gap = Math.abs(est - act), d = act ? gap / act : 1;
+  const cls = gap <= 0.5 || d <= 0.1 ? 'ok' : gap <= 1 || d <= 0.2 ? 's' : 'l'; // within half a truck counts as on target
+  return `<div class="cmp ${cls}">จริง ${f1(act)}${trucks !== undefined ? ` <small>(${trucks} คัน)</small>` : ''}</div>`;
 }
 
 // ---------- pages ----------
@@ -910,6 +950,7 @@ function bind() {
     i.addEventListener('input', syncDates);
   });
   $$('#modeTabs .tab').forEach((t) => t.addEventListener('click', () => setMode(t.dataset.mode)));
+  $$('#estMode .tab').forEach((t) => t.addEventListener('click', () => { S.estMode = t.dataset.em; render(); }));
   $('#fSnDate').addEventListener('change', (e) => { S.snDate = e.target.value; saveFilters(); render(); });
   $$('#snShift .chip').forEach((c) => c.addEventListener('click', () => { S.snShift = c.dataset.sh; drawMode(); saveFilters(); render(); }));
   $$('[data-snq]').forEach((c) => c.addEventListener('click', () => {

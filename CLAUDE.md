@@ -92,7 +92,11 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    - Group load per truck (pallet-equivalents) by shift D/N (< 3 trucks → group mean → WH shift mean). A pallet's shift
      comes from its Window name (xDnn / xNnn), else from its due time.
    - Each pallet adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = ceil(sum), shared out
-     to cells by largest remainder so cells add up to the total. Back-test on real data Sep–Oct (53 shifts per WH,
+     to cells by largest remainder so cells add up to the total.
+   - Mode "เทียบ Est กับที่ใช้จริง": all pallets in the filter (shipped + open), learning only from trucks dated before
+     the range start. Actual per cell = sum over shipped pallets of 1 ÷ (pallets on its truck), so actual trucks are shared
+     out by pallets and add up; the comparison uses the estimate of the shipped part only (estS) so an unfinished range
+     is still fair. Back-test on real data Sep–Oct (53 shifts per WH,
      learning only from earlier data): mean error WH1 4.1%, WH4 5.7%.
 
 ## UI colours (user's standard palette)

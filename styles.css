@@ -238,3 +238,7 @@ input[type=date] { font: inherit; padding: 6px 8px; border: 1px solid var(--line
 .est-v.zero { color: #9CA3AF; font-weight: 500; }
 .warn-tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 99px; background: #FEF3C7; color: #92400E; margin: 0 6px; }
 #btnRebuild { margin-top: 6px; }
+.cmp { font-size: 11.5px; font-weight: 600; }
+.cmp.ok { color: #047857; } .cmp.s { color: #B45309; } .cmp.l { color: #B91C1C; }
+.cmp small { font-weight: 400; color: var(--ink-2); }
+#estTiles:has(.kpi:nth-child(4):last-child) { grid-template-columns: repeat(4, 1fr); }
