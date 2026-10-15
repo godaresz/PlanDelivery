@@ -47,10 +47,13 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Window Name (`1…` → WH1, `4…` → WH4, other rows skipped with a warning); a warehouse with no rows in the file
    keeps its old data. **Nothing shipped is ever deleted.** Row identity = `Order|Part|Pallet|Recept Output No.`
    (an order can have several Shipping No.; duplicate keys are handled as a group).
-   - Rows with Shipping Confirm `CONFIRMED`, and anything already archived, are LOCKED: a new file never changes them.
-   - Other rows are replaced by the new file, but a shipped row is never downgraded to open.
-   - Shipped rows missing from the new file are kept; open rows missing from it are dropped (no longer in WMS).
-   - Shipped rows whose ship day is older than `keepDays` (default 7) move to the archive (not deleted).
+   - Shipping Confirm `CONFIRMED` = final. CONFIRMED rows (and anything already archived) are LOCKED and kept forever:
+     a new file never changes them.
+   - Every other row (open, scanned, or shipped-but-not-confirmed) is provisional and follows the latest file:
+     changed rows are replaced, rows missing from it are dropped (e.g. pallets merged / moved before confirm reappear
+     under the new Pallet No.). Real data (Aug–Oct) has no shipped-but-unconfirmed rows.
+   - CONFIRMED rows whose ship day is older than `keepDays` (default 7) move to the archive (not deleted).
+   - Truck history for Est learns only from CONFIRMED rows.
    ILMS uploads merge by Truckplan No (not deleted by uploads); trucks with Milestone `COMPLETE` are LOCKED like
    confirmed WMS rows, other trucks take the newer file's values.
    **Quarterly export + delete:** Firebase keeps the current + previous calendar quarter. Older quarters are exported
