@@ -120,6 +120,13 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Browser cache: `loadChunked` keeps payloads in IndexedDB (`shipcheck-cache`) and reuses them while meta.version is
    unchanged, so a visit reads only the meta docs unless data changed.
 
+14. **Auto update from folders** (data page, admin): File System Access API (Edge/Chrome desktop). The user picks the WMS
+   and ILMS export folders once (handles kept in IndexedDB `shipcheck-local`); while the page stays open and signed in
+   on that PC it checks every 15 min, takes the newest .csv/.xlsx per folder and runs the same `uploadFile(kind, file, true)`
+   as the buttons when name|lastModified|size changed (files modified < 1 min ago are retried a minute later; other-WH
+   rows are skipped without a confirm). State in localStorage `sc_auto_on` / `sc_auto_last`. After a browser restart
+   the folder permission may need one click ("ตรวจตอนนี้"). No server: nothing runs when the page is closed.
+
 ## UI colours (user's standard palette)
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED
 

@@ -425,3 +425,13 @@ body.tv main { max-width: none; zoom: 1.18; padding-bottom: 70px; }
 body.tv .kpi .val { font-size: 38px; }
 body.tv .top { padding: 8px 20px; }
 body.tv .clock { font-size: 22px; }
+
+/* auto update from folders */
+.auto-grid { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 12px; }
+.auto-row { display: grid; grid-template-columns: 60px minmax(160px, 240px) auto 1fr; gap: 12px; align-items: center;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: #F9FAFB; }
+.auto-path { font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
+.auto-last { font-size: 12.5px; color: var(--ink-2); }
+.auto-ctl { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+code { font-family: 'IBM Plex Mono', monospace; font-size: 12px; background: #F3F4F6; padding: 1px 5px; border-radius: 4px; }
+@media (max-width: 760px) { .auto-row { grid-template-columns: 1fr; } }

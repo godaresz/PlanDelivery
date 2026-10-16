@@ -216,6 +216,18 @@
           <p class="hint">เทียบ Truckplan No กับ Shipping No. ของ WMS · Delivery Date = เวลารถออกจริง · รถที่ COMPLETE แล้วถูกล็อก ไฟล์ใหม่แก้ไม่ได้ · ไม่ลบข้อมูล</p>
         </div>
       </section>
+      <section class="panel admin-only" id="autoPanel">
+        <div class="panel-h"><h2>อัปเดตอัตโนมัติจากโฟลเดอร์ (ทุก 15 นาที)</h2></div>
+        <p class="hint">เลือกโฟลเดอร์ที่ระบบ export ไฟล์ไว้ (เช่น <code>Desktop\Auto Data\WMS</code> และ <code>Desktop\Auto Data\ILMS</code>) ·
+          ทุก 15 นาทีจะหาไฟล์ล่าสุด (.csv / .xlsx) ในแต่ละโฟลเดอร์ ถ้าเป็นไฟล์ใหม่จะอัปโหลดให้เอง (กฎเดียวกับปุ่มอัปเดต) ·
+          ต้องเปิดหน้าเว็บนี้ค้างไว้ในเครื่องนั้น (ย่อหน้าต่างได้) และ login อยู่ · ใช้ได้กับ Edge / Chrome บนคอมพิวเตอร์ · ควรเปิดเครื่องเดียว</p>
+        <div class="auto-grid" id="autoGrid"></div>
+        <div class="auto-ctl">
+          <button class="btn primary" id="btnAutoToggle">▶ เริ่มอัปเดตอัตโนมัติ</button>
+          <button class="btn" id="btnAutoNow">ตรวจตอนนี้</button>
+          <span class="hint" id="autoStatus"></span>
+        </div>
+      </section>
       <section class="panel" id="archPanel">
         <div class="panel-h"><h2>ส่งออกและล้างข้อมูลเก่า (ทุก 3 เดือน)</h2></div>
         <p class="hint">Firebase เก็บไตรมาสปัจจุบัน + ไตรมาสก่อนหน้า (3–6 เดือน) · เมื่อขึ้นไตรมาสใหม่ ไตรมาสที่เก่ากว่าจะถูก export เป็นไฟล์ Excel

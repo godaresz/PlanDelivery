@@ -1189,85 +1189,214 @@ async function onUpload(e) {
   const label = input.closest('label');
   label.setAttribute('disabled', '');
   try {
-    if (kind === 'ilms') {
-      toast('กำลังอ่านไฟล์ ILMS…', false, 60000);
-      const res = await parseIlmsFile(file);
-      if (!res.rows.length) throw new Error('ไม่พบ Truckplan No ของ WH1 / WH4 ในไฟล์');
-      const latest = await store.loadAll();
-      const m = mergeIlms((latest.ilms && latest.ilms.data) || [], res.rows);
-      await store.saveIlms(m.rows, { fileName: file.name, count: m.rows.length, fromFile: res.rows.length });
-      toast(`อัปเดต ILMS แล้ว: ${res.rows.length.toLocaleString()} คันจากไฟล์ (WH1/WH4)` + (res.other ? ` · ข้ามคลังอื่น ${res.other}` : '')
-        + (m.skipped ? ` · ข้ามที่ COMPLETE แล้ว ${m.skipped.toLocaleString()}` : '')
-        + ` · รวมเก็บไว้ ${m.rows.length.toLocaleString()} คัน`, false, 8000);
-    } else if (kind === 'slide') {
-      toast('กำลังอ่านไฟล์ DataSlide…', false, 60000);
-      const res = await parseSlideFile(file);
-      await lockConfirmedDues(); // confirmed rows keep the due they were confirmed with (stamped with the old slide)
-      await store.saveSlide({ orders: res.orders, dues: res.dues },
-        { fileName: file.name, count: res.orders.length, valid: res.validCount });
-      toast(`อัปเดต DataSlide แล้ว: ${res.orders.length.toLocaleString()} Order (ล้างข้อมูลเดิมแล้ว)`);
-    } else {
-      toast('กำลังอ่านไฟล์ WMS…', false, 60000);
-      const rows = await parseWmsFile(file);
-      if (!rows.length) throw new Error('ไม่พบข้อมูลในไฟล์');
-      // one file for both warehouses: split by Window Name (1… = WH1, 4… = WH4)
-      const split = { WH1: [], WH4: [] };
-      let other = 0;
-      for (const r of rows) {
-        const c = String(r.w || '').trim()[0];
-        if (c === '1') split.WH1.push(r); else if (c === '4') split.WH4.push(r); else other++;
-      }
-      const found = WHS.filter((wh) => split[wh].length);
-      if (!found.length) throw new Error('ไม่พบ Window Name ที่ขึ้นต้นด้วย 1 หรือ 4');
-      if (other && !confirm(`มี ${other.toLocaleString()} แถวที่ Window Name ไม่ได้ขึ้นต้นด้วย 1 หรือ 4 — จะข้ามแถวเหล่านี้ ดำเนินการต่อ?`)) return;
-      const latest = await store.loadAll();
-      const keepDays = Number(S.rules.keepDays) || 7;
-      const msgs = [];
-      const index = latest.archIndex || { WH1: {}, WH4: {} };
-      const hist = (latest.truckhist && latest.truckhist.data) || { WH1: {}, WH4: {} };
-      const slideNow = slideMapOf(latest.slide && latest.slide.data);
-      const rulesNow = (latest.rules && latest.rules.groups) || DEFAULT_RULES.groups;
-      for (const wh of found) { // a warehouse missing from the file keeps its old data
-        const oldRows = (latest[wh] && latest[wh].data) || [];
-        // rows of this file that may already be archived: load those archive days to lock their keys
-        const days = [...new Set(split[wh].map(archDay))].filter((d) => index[wh] && index[wh][d]);
-        const archived = new Map();
-        for (const d of days) for (const r of await store.loadArchiveDay(wh, d)) {
-          if (!archived.has(r.k)) archived.set(r.k, []);
-          archived.get(r.k).push(r);
-        }
-        const m = mergeWms(oldRows, split[wh], keepDays, new Date(), archived);
-        // newly confirmed rows: lock the due used now (a later DataSlide / rule change won't move it)
-        lockDues(m.rows, slideNow, rulesNow); lockDues(m.toArchive, slideNow, rulesNow);
-        if (m.toArchive.length) { // archive first: if the next write fails, the rows still exist in one place
-          const byDay = new Map();
-          for (const r of m.toArchive) { const d = archDay(r); if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push(r); }
-          await store.appendArchive(wh, byDay, index);
-          S.arch.clear();
-        }
-        // truck summaries for Est (kept separately, so history older than the active data is still used)
-        const acc = truckAccAdd(truckAcc(), m.rows.concat(m.toArchive));
-        hist[wh] = mergeTruckHist(hist[wh] || {}, truckAccDone(acc));
-        const ln = truckAccLinks(acc), old = (hist.links && hist.links[wh]) || { parts: {}, sups: {} };
-        hist.links = { ...(hist.links || {}), [wh]: { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } } };
-        await store.saveWms(wh, m.rows, { fileName: file.name, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped });
-        msgs.push(`${wh} ${split[wh].length.toLocaleString()} แถว` + (m.skipped ? ` · ข้ามที่ Confirm แล้ว ${m.skipped.toLocaleString()}` : '')
-          + (m.kept ? ` · เก็บที่ส่งแล้วจากรอบก่อน ${m.kept.toLocaleString()}` : '')
-          + (m.dropped ? ` · ไม่มีในไฟล์ใหม่ (ยังไม่ Confirm) เอาออก ${m.dropped.toLocaleString()}` : '')
-          + (m.toArchive.length ? ` · ย้ายเข้าประวัติ ${m.toArchive.length.toLocaleString()}` : ''));
-      }
-      await store.saveTruckHist(hist, { WH1: Object.keys(hist.WH1 || {}).length, WH4: Object.keys(hist.WH4 || {}).length });
-      const miss = WHS.filter((wh) => !split[wh].length);
-      toast(`อัปเดต WMS แล้ว: ${msgs.join(' · ')}` + (miss.length ? ` · ไม่มีข้อมูล ${miss.join(', ')} ในไฟล์ (คงข้อมูลเดิม)` : '')
-        + (other ? ` · ข้ามแถวอื่น ${other}` : ''), false, 9000);
-    }
-    await reload();
+    await uploadFile(kind, file);
   } catch (err) {
     console.error(err);
     toast('อัปเดตไม่สำเร็จ: ' + err.message, true, 9000);
   } finally {
     label.removeAttribute('disabled');
   }
+}
+// upload one file (manual button or the folder auto-update). auto = no confirm dialogs (rows of other WH are skipped)
+async function uploadFile(kind, file, auto = false) {
+  if (kind === 'ilms') {
+    toast('กำลังอ่านไฟล์ ILMS…', false, 60000);
+    const res = await parseIlmsFile(file);
+    if (!res.rows.length) throw new Error('ไม่พบ Truckplan No ของ WH1 / WH4 ในไฟล์');
+    const latest = await store.loadAll();
+    const m = mergeIlms((latest.ilms && latest.ilms.data) || [], res.rows);
+    await store.saveIlms(m.rows, { fileName: file.name, count: m.rows.length, fromFile: res.rows.length });
+    toast(`อัปเดต ILMS แล้ว: ${res.rows.length.toLocaleString()} คันจากไฟล์ (WH1/WH4)` + (res.other ? ` · ข้ามคลังอื่น ${res.other}` : '')
+      + (m.skipped ? ` · ข้ามที่ COMPLETE แล้ว ${m.skipped.toLocaleString()}` : '')
+      + ` · รวมเก็บไว้ ${m.rows.length.toLocaleString()} คัน`, false, 8000);
+  } else if (kind === 'slide') {
+    toast('กำลังอ่านไฟล์ DataSlide…', false, 60000);
+    const res = await parseSlideFile(file);
+    await lockConfirmedDues(); // confirmed rows keep the due they were confirmed with (stamped with the old slide)
+    await store.saveSlide({ orders: res.orders, dues: res.dues },
+      { fileName: file.name, count: res.orders.length, valid: res.validCount });
+    toast(`อัปเดต DataSlide แล้ว: ${res.orders.length.toLocaleString()} Order (ล้างข้อมูลเดิมแล้ว)`);
+  } else {
+    toast('กำลังอ่านไฟล์ WMS…', false, 60000);
+    const rows = await parseWmsFile(file);
+    if (!rows.length) throw new Error('ไม่พบข้อมูลในไฟล์');
+    // one file for both warehouses: split by Window Name (1… = WH1, 4… = WH4)
+    const split = { WH1: [], WH4: [] };
+    let other = 0;
+    for (const r of rows) {
+      const c = String(r.w || '').trim()[0];
+      if (c === '1') split.WH1.push(r); else if (c === '4') split.WH4.push(r); else other++;
+    }
+    const found = WHS.filter((wh) => split[wh].length);
+    if (!found.length) throw new Error('ไม่พบ Window Name ที่ขึ้นต้นด้วย 1 หรือ 4');
+    if (other && !auto && !confirm(`มี ${other.toLocaleString()} แถวที่ Window Name ไม่ได้ขึ้นต้นด้วย 1 หรือ 4 — จะข้ามแถวเหล่านี้ ดำเนินการต่อ?`)) return;
+    const latest = await store.loadAll();
+    const keepDays = Number(S.rules.keepDays) || 7;
+    const msgs = [];
+    const index = latest.archIndex || { WH1: {}, WH4: {} };
+    const hist = (latest.truckhist && latest.truckhist.data) || { WH1: {}, WH4: {} };
+    const slideNow = slideMapOf(latest.slide && latest.slide.data);
+    const rulesNow = (latest.rules && latest.rules.groups) || DEFAULT_RULES.groups;
+    for (const wh of found) { // a warehouse missing from the file keeps its old data
+      const oldRows = (latest[wh] && latest[wh].data) || [];
+      // rows of this file that may already be archived: load those archive days to lock their keys
+      const days = [...new Set(split[wh].map(archDay))].filter((d) => index[wh] && index[wh][d]);
+      const archived = new Map();
+      for (const d of days) for (const r of await store.loadArchiveDay(wh, d)) {
+        if (!archived.has(r.k)) archived.set(r.k, []);
+        archived.get(r.k).push(r);
+      }
+      const m = mergeWms(oldRows, split[wh], keepDays, new Date(), archived);
+      // newly confirmed rows: lock the due used now (a later DataSlide / rule change won't move it)
+      lockDues(m.rows, slideNow, rulesNow); lockDues(m.toArchive, slideNow, rulesNow);
+      if (m.toArchive.length) { // archive first: if the next write fails, the rows still exist in one place
+        const byDay = new Map();
+        for (const r of m.toArchive) { const d = archDay(r); if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push(r); }
+        await store.appendArchive(wh, byDay, index);
+        S.arch.clear();
+      }
+      // truck summaries for Est (kept separately, so history older than the active data is still used)
+      const acc = truckAccAdd(truckAcc(), m.rows.concat(m.toArchive));
+      hist[wh] = mergeTruckHist(hist[wh] || {}, truckAccDone(acc));
+      const ln = truckAccLinks(acc), old = (hist.links && hist.links[wh]) || { parts: {}, sups: {} };
+      hist.links = { ...(hist.links || {}), [wh]: { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } } };
+      await store.saveWms(wh, m.rows, { fileName: file.name, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped });
+      msgs.push(`${wh} ${split[wh].length.toLocaleString()} แถว` + (m.skipped ? ` · ข้ามที่ Confirm แล้ว ${m.skipped.toLocaleString()}` : '')
+        + (m.kept ? ` · เก็บที่ส่งแล้วจากรอบก่อน ${m.kept.toLocaleString()}` : '')
+        + (m.dropped ? ` · ไม่มีในไฟล์ใหม่ (ยังไม่ Confirm) เอาออก ${m.dropped.toLocaleString()}` : '')
+        + (m.toArchive.length ? ` · ย้ายเข้าประวัติ ${m.toArchive.length.toLocaleString()}` : ''));
+    }
+    await store.saveTruckHist(hist, { WH1: Object.keys(hist.WH1 || {}).length, WH4: Object.keys(hist.WH4 || {}).length });
+    const miss = WHS.filter((wh) => !split[wh].length);
+    toast(`อัปเดต WMS แล้ว: ${msgs.join(' · ')}` + (miss.length ? ` · ไม่มีข้อมูล ${miss.join(', ')} ในไฟล์ (คงข้อมูลเดิม)` : '')
+      + (other ? ` · ข้ามแถวอื่น ${other}` : ''), false, 9000);
+  }
+  await reload();
+}
+
+// ---------- auto update from local folders (File System Access API, Edge / Chrome desktop) ----------
+// The page (kept open and signed in on one PC) checks the WMS and ILMS export folders every AUTO_MIN minutes and uploads
+// the newest file when it is new (name + modified time + size). Folder handles are kept in IndexedDB on this PC.
+const AUTO_MIN = 15;
+const AUTO_KINDS = [['wms', 'WMS'], ['ilms', 'ILMS']];
+const autoUp = { on: false, timer: null, next: 0, busy: false, ready: false, h: {}, last: {}, msg: {} };
+function localKv(mode, fn) {
+  return new Promise((res) => {
+    try {
+      const rq = indexedDB.open('shipcheck-local', 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+      rq.onerror = () => res(null);
+      rq.onsuccess = () => {
+        try { const r2 = fn(rq.result.transaction('kv', mode).objectStore('kv')); r2.onsuccess = () => res(r2.result ?? null); r2.onerror = () => res(null); }
+        catch { res(null); }
+      };
+    } catch { res(null); }
+  });
+}
+const kvGet = (k) => localKv('readonly', (st) => st.get(k));
+const kvSet = (k, v) => localKv('readwrite', (st) => st.put(v, k));
+async function autoInit() {
+  if (autoUp.ready) return;
+  autoUp.ready = true;
+  if (!('showDirectoryPicker' in window)) { drawAuto(); return; }
+  for (const [k] of AUTO_KINDS) autoUp.h[k] = await kvGet('dir_' + k);
+  try { autoUp.last = JSON.parse(lsGet('sc_auto_last') || '{}'); } catch { autoUp.last = {}; }
+  drawAuto();
+  if (lsGet('sc_auto_on') === '1') autoStart(false);
+}
+async function autoPerm(h, ask) {
+  if (!h) return false;
+  let p = await h.queryPermission({ mode: 'read' });
+  if (p !== 'granted' && ask) p = await h.requestPermission({ mode: 'read' });
+  return p === 'granted';
+}
+async function autoPick(k) {
+  try {
+    const h = await window.showDirectoryPicker({ id: 'sc-' + k, mode: 'read' });
+    autoUp.h[k] = h; await kvSet('dir_' + k, h);
+    delete autoUp.last[k]; lsSet('sc_auto_last', JSON.stringify(autoUp.last));
+    autoUp.msg[k] = 'เลือกโฟลเดอร์แล้ว';
+    drawAuto();
+  } catch (e) { if (e.name !== 'AbortError') toast('เลือกโฟลเดอร์ไม่สำเร็จ: ' + e.message, true); }
+}
+async function autoStart(fromClick) {
+  if (!S.user) { toast('ต้อง login ก่อน', true); return; }
+  if (!AUTO_KINDS.some(([k]) => autoUp.h[k])) { toast('เลือกโฟลเดอร์ WMS / ILMS ก่อน', true); return; }
+  for (const [k] of AUTO_KINDS) if (autoUp.h[k] && !(await autoPerm(autoUp.h[k], fromClick))) autoUp.msg[k] = 'ยังไม่ได้รับอนุญาตให้อ่านโฟลเดอร์ — กด "ตรวจตอนนี้"';
+  autoUp.on = true; lsSet('sc_auto_on', '1');
+  clearInterval(autoUp.timer); autoUp.timer = setInterval(() => { if (Date.now() >= autoUp.next) autoRun(false); else drawAutoStatus(); }, 20000);
+  autoRun(fromClick);
+}
+function autoStop() {
+  autoUp.on = false; lsSet('sc_auto_on', '0'); clearInterval(autoUp.timer); drawAuto();
+}
+async function newestFile(dir) {
+  let best = null;
+  for await (const [name, h] of dir.entries()) {
+    if (h.kind !== 'file' || !/\.(csv|xlsx|xls)$/i.test(name) || name.startsWith('~$')) continue;
+    const f = await h.getFile();
+    if (!best || f.lastModified > best.lastModified) best = f;
+  }
+  return best;
+}
+async function autoRun(ask) {
+  if (autoUp.busy) return;
+  autoUp.busy = true; autoUp.next = Date.now() + AUTO_MIN * 60000; autoUp.checked = Date.now();
+  drawAutoStatus();
+  try {
+    for (const [k, label] of AUTO_KINDS) {
+      const h = autoUp.h[k];
+      if (!h) continue;
+      try {
+        if (!(await autoPerm(h, ask))) { autoUp.msg[k] = 'ยังไม่ได้รับอนุญาตให้อ่านโฟลเดอร์ — กด "ตรวจตอนนี้"'; continue; }
+        const f = await newestFile(h);
+        if (!f) { autoUp.msg[k] = 'ไม่พบไฟล์ .csv / .xlsx ในโฟลเดอร์'; continue; }
+        const sig = `${f.name}|${f.lastModified}|${f.size}`;
+        if (autoUp.last[k] && autoUp.last[k].sig === sig) { autoUp.msg[k] = 'ไม่มีไฟล์ใหม่'; continue; }
+        if (Date.now() - f.lastModified < 60000) { // the export may still be writing: try again in a minute
+          autoUp.msg[k] = `พบไฟล์ใหม่ ${f.name} — รอให้ export เสร็จ (ตรวจอีกครั้งใน 1 นาที)`;
+          autoUp.next = Math.min(autoUp.next, Date.now() + 60000); continue;
+        }
+        autoUp.msg[k] = `กำลังอัปโหลด ${f.name}…`; drawAuto();
+        await uploadFile(k, f, true);
+        autoUp.last[k] = { sig, name: f.name, fileAt: f.lastModified, at: Date.now() };
+        lsSet('sc_auto_last', JSON.stringify(autoUp.last));
+        autoUp.msg[k] = `อัปโหลดแล้ว ${label}`;
+      } catch (e) {
+        console.error(e);
+        autoUp.msg[k] = 'อัปโหลดไม่สำเร็จ: ' + e.message + ' (จะลองใหม่รอบถัดไป)';
+        toast(`อัปเดต ${label} อัตโนมัติไม่สำเร็จ: ${e.message}`, true, 9000);
+      }
+    }
+  } finally { autoUp.busy = false; drawAuto(); }
+}
+function drawAuto() {
+  const grid = $('#autoGrid');
+  if (!grid) return;
+  if (!('showDirectoryPicker' in window)) {
+    grid.innerHTML = '<p class="hint c-od">เบราว์เซอร์นี้ไม่รองรับการอ่านโฟลเดอร์ — ใช้ Microsoft Edge หรือ Google Chrome บนคอมพิวเตอร์</p>';
+    $('#btnAutoToggle').disabled = true; $('#btnAutoNow').disabled = true; return;
+  }
+  grid.innerHTML = AUTO_KINDS.map(([k, label]) => {
+    const h = autoUp.h[k], l = autoUp.last[k];
+    return `<div class="auto-row"><b>${label}</b>
+      <span class="auto-path">${h ? `📁 ${esc(h.name)}` : '<span class="hint">ยังไม่ได้เลือกโฟลเดอร์</span>'}</span>
+      <button class="btn sm" data-pick="${k}">${h ? 'เปลี่ยนโฟลเดอร์' : 'เลือกโฟลเดอร์'}</button>
+      <span class="auto-last">${l ? `ล่าสุด: ${esc(l.name)} (ไฟล์ ${fmtShow(new Date(l.fileAt))} · อัปโหลด ${fmtShow(new Date(l.at))})` : ''}
+        ${autoUp.msg[k] ? `<div class="hint">${esc(autoUp.msg[k])}</div>` : ''}</span></div>`;
+  }).join('');
+  $$('#autoGrid [data-pick]').forEach((b) => b.addEventListener('click', () => autoPick(b.dataset.pick)));
+  $('#btnAutoToggle').textContent = autoUp.on ? '⏸ หยุดอัปเดตอัตโนมัติ' : '▶ เริ่มอัปเดตอัตโนมัติ';
+  $('#btnAutoToggle').classList.toggle('danger', autoUp.on);
+  $('#btnAutoToggle').classList.toggle('primary', !autoUp.on);
+  drawAutoStatus();
+}
+function drawAutoStatus() {
+  const el = $('#autoStatus');
+  if (!el) return;
+  if (!autoUp.on) { el.textContent = 'ปิดอยู่'; return; }
+  const left = Math.max(0, Math.round((autoUp.next - Date.now()) / 60000));
+  el.textContent = autoUp.busy ? 'กำลังตรวจ…' : `เปิดอยู่ · ตรวจล่าสุด ${autoUp.checked ? fmtShow(new Date(autoUp.checked)) : '-'} · ตรวจครั้งถัดไปในอีก ${left} นาที`;
 }
 
 // ---------- rules dialog ----------
@@ -1341,6 +1470,8 @@ function bind() {
   $('#btnPlanXlsx').addEventListener('click', exportPlan);
   $('#btnEstXlsx').addEventListener('click', exportEst);
   $('#btnAcc').addEventListener('click', () => computeAccuracy(30));
+  $('#btnAutoToggle').addEventListener('click', () => (autoUp.on ? autoStop() : autoStart(true)));
+  $('#btnAutoNow').addEventListener('click', () => (autoUp.on ? autoRun(true) : autoStart(true)));
   $('#btnTv').addEventListener('click', () => (tv.on ? tvStop() : tvStart()));
   $('#tvExit').addEventListener('click', tvStop);
   $('#tvPause').addEventListener('click', () => { tv.paused = !tv.paused; tvDraw(); });
@@ -1482,6 +1613,7 @@ async function main() {
   store.onAuth((u) => {
     S.user = u;
     if (S.data) renderStale();
+    if (u) autoInit(); else if (autoUp.on) { clearInterval(autoUp.timer); autoUp.on = false; drawAuto(); }
     document.body.classList.toggle('is-admin', !!u);
     $('#btnLogin').textContent = store.isDemo ? 'โหมดทดลอง' : u ? `ออกจากระบบ (${u.email})` : 'เข้าสู่ระบบ';
     $('#btnLogin').disabled = store.isDemo;
