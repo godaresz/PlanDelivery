@@ -218,14 +218,15 @@
         </div>
       </section>
       <section class="panel admin-only" id="autoPanel">
-        <div class="panel-h"><h2>อัปเดตอัตโนมัติจากโฟลเดอร์ (ทุก 15 นาที)</h2></div>
+        <div class="panel-h"><h2>อัปเดตอัตโนมัติจากโฟลเดอร์ (ทุก <span class="auto-min-lbl">15</span> นาที)</h2></div>
         <p class="hint">เลือกโฟลเดอร์ที่ระบบ export ไฟล์ไว้ (เช่น <code>Desktop\Auto Data\WMS</code> และ <code>Desktop\Auto Data\ILMS</code>) ·
-          ทุก 15 นาทีจะหาไฟล์ล่าสุด (.csv / .xlsx) ในแต่ละโฟลเดอร์ ถ้าเป็นไฟล์ใหม่จะอัปโหลดให้เอง (กฎเดียวกับปุ่มอัปเดต) ·
+          ทุกรอบจะหาไฟล์ล่าสุด (.csv / .xlsx) ในแต่ละโฟลเดอร์ ถ้าเป็นไฟล์ใหม่จะอัปโหลดให้เอง (กฎเดียวกับปุ่มอัปเดต) ·
           ต้องเปิดหน้าเว็บนี้ค้างไว้ในเครื่องนั้น (ย่อหน้าต่างได้) และ login อยู่ · ใช้ได้กับ Edge / Chrome บนคอมพิวเตอร์ · ควรเปิดเครื่องเดียว</p>
         <div class="auto-grid" id="autoGrid"></div>
         <div class="auto-ctl">
           <button class="btn primary" id="btnAutoToggle">▶ เริ่มอัปเดตอัตโนมัติ</button>
           <button class="btn" id="btnAutoNow">ตรวจตอนนี้</button>
+          <label class="inline auto-min">รอบการตรวจ ทุก <input type="number" id="autoMin" min="5" max="240" step="5" value="15"> นาที</label>
           <span class="hint" id="autoStatus"></span>
         </div>
       </section>

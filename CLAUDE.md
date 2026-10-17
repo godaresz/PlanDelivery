@@ -125,7 +125,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 
 14. **Auto update from folders** (data page, admin): File System Access API (Edge/Chrome desktop). The user picks the WMS
    and ILMS export folders once (handles kept in IndexedDB `shipcheck-local`); while the page stays open and signed in
-   on that PC it checks every 15 min, takes the newest .csv/.xlsx per folder and runs the same `uploadFile(kind, file, true)`
+   on that PC it checks every N min (set on the panel, 5–240, default 15, localStorage `sc_auto_min`, per PC), takes the newest .csv/.xlsx per folder and runs the same `uploadFile(kind, file, true)`
    as the buttons when name|lastModified|size changed (files modified < 1 min ago are retried a minute later; other-WH
    rows are skipped without a confirm). State in localStorage `sc_auto_on` / `sc_auto_last`. After a browser restart
    the folder permission may need one click ("ตรวจตอนนี้"). No server: nothing runs when the page is closed.

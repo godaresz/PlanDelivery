@@ -1290,9 +1290,10 @@ async function uploadFile(kind, file, auto = false) {
 }
 
 // ---------- auto update from local folders (File System Access API, Edge / Chrome desktop) ----------
-// The page (kept open and signed in on one PC) checks the WMS and ILMS export folders every AUTO_MIN minutes and uploads
+// The page (kept open and signed in on one PC) checks the WMS and ILMS export folders every autoMin() minutes and uploads
 // the newest file when it is new (name + modified time + size). Folder handles are kept in IndexedDB on this PC.
-const AUTO_MIN = 15;
+// check interval in minutes, set on the panel and kept on this PC (localStorage sc_auto_min), 5–240, default 15
+const autoMin = () => Math.max(5, Math.min(240, Number(lsGet('sc_auto_min')) || 15));
 const AUTO_KINDS = [['wms', 'WMS'], ['ilms', 'ILMS']];
 const autoUp = { on: false, timer: null, next: 0, busy: false, ready: false, h: {}, last: {}, msg: {} };
 function localKv(mode, fn) {
@@ -1356,7 +1357,7 @@ async function newestFile(dir) {
 }
 async function autoRun(ask) {
   if (autoUp.busy) return;
-  autoUp.busy = true; autoUp.next = Date.now() + AUTO_MIN * 60000; autoUp.checked = Date.now();
+  autoUp.busy = true; autoUp.next = Date.now() + autoMin() * 60000; autoUp.checked = Date.now();
   drawAutoStatus();
   try {
     for (const [k, label] of AUTO_KINDS) {
@@ -1401,6 +1402,8 @@ function drawAuto() {
         ${autoUp.msg[k] ? `<div class="hint">${esc(autoUp.msg[k])}</div>` : ''}</span></div>`;
   }).join('');
   $$('#autoGrid [data-pick]').forEach((b) => b.addEventListener('click', () => autoPick(b.dataset.pick)));
+  $('#autoMin').value = autoMin();
+  $$('.auto-min-lbl').forEach((e) => { e.textContent = autoMin(); });
   $('#btnAutoToggle').textContent = autoUp.on ? '⏸ หยุดอัปเดตอัตโนมัติ' : '▶ เริ่มอัปเดตอัตโนมัติ';
   $('#btnAutoToggle').classList.toggle('danger', autoUp.on);
   $('#btnAutoToggle').classList.toggle('primary', !autoUp.on);
@@ -1488,6 +1491,13 @@ function bind() {
   $('#btnAcc').addEventListener('click', () => computeAccuracy(30));
   $('#btnAutoToggle').addEventListener('click', () => (autoUp.on ? autoStop() : autoStart(true)));
   $('#btnAutoNow').addEventListener('click', () => (autoUp.on ? autoRun(true) : autoStart(true)));
+  $('#autoMin').addEventListener('change', (e) => {
+    const m = Math.max(5, Math.min(240, Math.round(Number(e.target.value) || 15)));
+    lsSet('sc_auto_min', String(m));
+    if (autoUp.on && autoUp.checked) autoUp.next = autoUp.checked + m * 60000; // next check follows the new interval
+    drawAuto();
+    toast(`ตั้งรอบตรวจเป็นทุก ${m} นาทีแล้ว (เฉพาะเครื่องนี้)`);
+  });
   $('#btnTv').addEventListener('click', () => (tv.on ? tvStop() : tvStart()));
   $('#tvExit').addEventListener('click', tvStop);
   $('#tvPause').addEventListener('click', () => { tv.paused = !tv.paused; tvDraw(); });

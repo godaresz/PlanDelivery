@@ -445,3 +445,5 @@ code { font-family: 'IBM Plex Mono', monospace; font-size: 12px; background: #F3
   box-shadow: 0 0 0 0 rgba(245,158,11,.4); animation: soonGlow 2.4s ease-in-out infinite; }
 .soon-strip a { color: #B45309; font-weight: 600; }
 @keyframes soonGlow { 50% { box-shadow: 0 0 0 4px rgba(245,158,11,.18); } }
+.auto-min { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.auto-min input { width: 70px; }
