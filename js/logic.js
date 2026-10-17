@@ -58,6 +58,7 @@ export function lockDues(rows, slideMap, rules) {
   return n;
 }
 
+export const SOON_MIN = 30; // warn this many minutes before a due
 export function evaluate(rows, slideMap, rules, now) {
   return rows.map((r) => {
     const wmsDue = fromKey(r.dd);
@@ -75,7 +76,10 @@ export function evaluate(rows, slideMap, rules, now) {
       st = due && due < now ? ST.OVERDUE : ST.PENDING;
       if (due) lateMin = Math.round((now - due) / 60000);
     }
-    return { ...r, wmsDue, due, src, done, scanned, shipT, st, lateMin };
+    // not shipped and the due is coming within SOON_MIN minutes: warn before it becomes overdue
+    const soonMin = st === ST.PENDING && due ? Math.ceil((due - now) / 60000) : null;
+    const soon = soonMin !== null && soonMin <= SOON_MIN;
+    return { ...r, wmsDue, due, src, done, scanned, shipT, st, lateMin, soon, soonMin };
   });
 }
 
@@ -183,6 +187,8 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
       x.lateMin = x.late ? x.maxLate : null;
     }
     x.od = !x.left && !!x.dueStart && x.dueStart < now;
+    x.soonMin = !x.left && !x.od && x.dueStart ? Math.ceil((x.dueStart - now) / 60000) : null;
+    x.soon = x.soonMin !== null && x.soonMin <= SOON_MIN; // Due start within 30 minutes, truck not left yet
     // owning warehouse = 9th digit of the Shipping No. (a truck may also carry the other WH's pallets)
     x.whOwn = x.info ? `WH${x.info.whDigit}` : [...x.wh].sort().join(', ');
   }
@@ -440,7 +446,7 @@ export function allocateWhole(values) {
 export function tripTotals(list) {
   const left = list.filter((x) => x.left);
   return { used: list.length, left: left.length, remain: list.length - left.length,
-    late: left.filter((x) => x.late).length, od: list.filter((x) => x.od).length };
+    late: left.filter((x) => x.late).length, od: list.filter((x) => x.od).length, soon: list.filter((x) => x.soon).length };
 }
 
 // day a row belongs to in the archive: shipping day, else due day ("YYYY-MM-DD")

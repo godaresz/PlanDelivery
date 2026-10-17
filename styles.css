@@ -435,3 +435,13 @@ body.tv .clock { font-size: 22px; }
 .auto-ctl { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 code { font-family: 'IBM Plex Mono', monospace; font-size: 12px; background: #F3F4F6; padding: 1px 5px; border-radius: 4px; }
 @media (max-width: 760px) { .auto-row { grid-template-columns: 1fr; } }
+
+/* due within 30 minutes */
+.pill.soon { background: #FEF3C7; color: #92400E; }
+.pill.soon::before { animation: dotPulse 1.2s ease-in-out infinite; }
+.c-soon { color: #B45309; font-weight: 600; }
+.soon-strip { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; padding: 10px 14px; border-radius: var(--radius);
+  background: linear-gradient(90deg, #FFFBEB, #FEF3C7); border: 1px solid #FCD34D; color: #92400E; font-size: 13.5px;
+  box-shadow: 0 0 0 0 rgba(245,158,11,.4); animation: soonGlow 2.4s ease-in-out infinite; }
+.soon-strip a { color: #B45309; font-weight: 600; }
+@keyframes soonGlow { 50% { box-shadow: 0 0 0 4px rgba(245,158,11,.18); } }

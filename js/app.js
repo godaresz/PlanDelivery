@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, SOON_MIN, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -485,11 +485,12 @@ function renderAll() {
 }
 
 function kpiCalc(rows) {
-  const k = { od: { p: new Set(), r: new Set(), b: 0 }, pe: { p: new Set(), r: new Set(), b: 0 },
+  const k = { so: new Set(), od: { p: new Set(), r: new Set(), b: 0 }, pe: { p: new Set(), r: new Set(), b: 0 },
     sc: { p: new Set(), b: 0 }, dn: { p: new Set(), r: new Set(), b: 0, late: 0 } };
   for (const r of rows) {
     const pal = r.pl || r.k;
     const t = r.st === ST.OVERDUE ? k.od : r.st === ST.PENDING ? k.pe : k.dn;
+    if (r.soon) k.so.add(pal);
     (r.rk ? t.r : t.p).add(pal); t.b += r.bx;
     if (r.st === ST.DONE_LATE) k.dn.late++;
     if (r.scanned) { k.sc.p.add(pal); k.sc.b += r.bx; }
@@ -510,7 +511,7 @@ function renderKpis(all, scope) {
         <div class="kpi overdue"><div class="lbl">เลยกำหนด ยังไม่ส่ง</div><div class="val">${tot(k.od)}</div>
           <div class="det">${k.od.p.size} Pallet · ${k.od.r.size} Rack · ${k.od.b.toLocaleString()} กล่อง</div></div>
         <div class="kpi pending"><div class="lbl">รอส่ง (ยังไม่ถึงกำหนด)</div><div class="val">${tot(k.pe)}</div>
-          <div class="det">${k.pe.p.size} Pallet · ${k.pe.r.size} Rack · ${k.pe.b.toLocaleString()} กล่อง</div></div>
+          <div class="det">${k.pe.p.size} Pallet · ${k.pe.r.size} Rack · ${k.pe.b.toLocaleString()} กล่อง${k.so.size ? `<br><span class="c-soon">ใกล้ถึง Due ≤ ${SOON_MIN} นาที ${k.so.size} หน่วย</span>` : ''}</div></div>
         <div class="kpi scan"><div class="lbl">ยิงแล้ว ยังไม่ขึ้นรถ</div><div class="val">${k.sc.p.size}</div>
           <div class="det">${k.sc.b.toLocaleString()} กล่อง (นับรวมใน 2 ช่องแรก)</div></div>
         <div class="kpi done"><div class="lbl">ส่งแล้ว</div><div class="val">${tot(k.dn)}</div>
@@ -586,19 +587,21 @@ function lateCell(x) {
 function tripStatus(x) {
   if (x.left) return x.late ? `<span class="pill done_late${x.lateMin >= 15 ? ' big' : ''}">ออกแล้ว · ช้า</span>`
     : '<span class="pill done_on">ออกแล้ว · ตรงเวลา</span>';
-  return x.od ? '<span class="pill overdue">ยังไม่ออก · เลยกำหนด</span>' : '<span class="pill pending">ยังไม่ออก</span>';
+  if (x.od) return '<span class="pill overdue">ยังไม่ออก · เลยกำหนด</span>';
+  return x.soon ? `<span class="pill soon">ยังไม่ออก · อีก ${x.soonMin} นาทีถึง Due</span>` : '<span class="pill pending">ยังไม่ออก</span>';
 }
 function truckTiles(T) {
   const tile = (cls, lbl, v, det = '') => `<div class="kpi ${cls}"><div class="lbl">${lbl}</div><div class="val">${v} <small>คัน</small></div><div class="det">${det}</div></div>`;
   return [
     tile('trip', 'ใช้รถทั้งหมด', T.used, 'ตาม Shipping No.'),
     tile('done', 'ส่งแล้ว (ออกแล้ว)', T.left, `ตรงเวลา ${T.left - T.late} · ช้า ${T.late}`),
-    tile('pending', 'เหลือ (ยังไม่ออก)', T.remain, T.od ? `<span class="c-late">เลยกำหนดแล้ว ${T.od} คัน</span>` : 'ยังไม่ถึงกำหนด'),
+    tile('pending', 'เหลือ (ยังไม่ออก)', T.remain, [T.od ? `<span class="c-late">เลยกำหนดแล้ว ${T.od} คัน</span>` : '',
+      T.soon ? `<span class="c-soon">ใกล้ถึง Due ≤ ${SOON_MIN} นาที ${T.soon} คัน</span>` : ''].filter(Boolean).join(' · ') || 'ยังไม่ถึงกำหนด'),
     tile('overdue', 'ออกช้า', T.late, T.left ? `${Math.round((T.late / T.left) * 100)}% ของที่ออกแล้ว` : ''),
   ].join('');
 }
-const TRUCK_CHIPS = [['ALL', 'ทั้งหมด'], ['LEFT', 'ออกแล้ว'], ['LATE', 'ออกช้า'], ['REMAIN', 'ยังไม่ออก'], ['OD', 'ยังไม่ออก · เลยกำหนด']];
-const truckFilter = { ALL: () => true, LEFT: (x) => x.left, LATE: (x) => x.late, REMAIN: (x) => !x.left, OD: (x) => x.od };
+const TRUCK_CHIPS = [['ALL', 'ทั้งหมด'], ['LEFT', 'ออกแล้ว'], ['LATE', 'ออกช้า'], ['REMAIN', 'ยังไม่ออก'], ['SOON', `ใกล้ถึง Due (≤ ${SOON_MIN} นาที)`], ['OD', 'ยังไม่ออก · เลยกำหนด']];
+const truckFilter = { ALL: () => true, LEFT: (x) => x.left, LATE: (x) => x.late, REMAIN: (x) => !x.left, SOON: (x) => x.soon, OD: (x) => x.od };
 
 function renderTrips(list, rows) {
   const showWh = S.wh === 'ALL';
@@ -680,6 +683,17 @@ function openTruck(sn) {
 }
 
 function renderOverview(rows, trips) {
+  // warning strip: trucks / pallets whose due comes within SOON_MIN minutes and are not shipped yet
+  const soonTrips = trips.filter((x) => x.soon).sort((a, b) => a.soonMin - b.soonMin);
+  const soonUnits = new Set(rows.filter((r) => r.soon).map((r) => r.pl || r.k)).size;
+  const el = $('#ovSoon');
+  el.hidden = !soonTrips.length && !soonUnits;
+  if (!el.hidden) {
+    el.innerHTML = `<b>⏰ ใกล้ถึง Due ภายใน ${SOON_MIN} นาที</b>
+      ${soonTrips.length ? `<span>รถยังไม่ออก <b>${soonTrips.length}</b> คัน: ${soonTrips.slice(0, 8).map((x) => `<a href="#" data-sn="${esc(x.sn)}">${esc(x.sn)}</a> (อีก ${x.soonMin} นาที)`).join(', ')}${soonTrips.length > 8 ? ' …' : ''}</span>` : ''}
+      ${soonUnits ? `<span>งานยังไม่ส่ง <b>${soonUnits}</b> หน่วย (Pallet + Rack)</span>` : ''}`;
+    $$('#ovSoon a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openTruck(a.dataset.sn); }));
+  }
   $('#ovTruckTiles').innerHTML = trips.length ? truckTiles(tripTotals(trips)) : '<p class="hint">ยังไม่มีข้อมูลรถในช่วงเวลานี้</p>';
   const wins = byWindow(rows).filter((x) => x.od.p.size + x.od.r.size > 0)
     .sort((a, b) => (b.od.p.size + b.od.r.size) - (a.od.p.size + a.od.r.size)).slice(0, 8);
@@ -1125,7 +1139,7 @@ function showPage() {
 function statusPill(r) {
   let h;
   if (r.st === ST.OVERDUE) h = `<span class="pill overdue">เลยกำหนด ${dur(r.lateMin)}</span>`;
-  else if (r.st === ST.PENDING) h = `<span class="pill pending">รอส่ง</span>`;
+  else if (r.st === ST.PENDING) h = r.soon ? `<span class="pill soon">รอส่ง · อีก ${r.soonMin} นาทีถึง Due</span>` : `<span class="pill pending">รอส่ง</span>`;
   else if (r.st === ST.DONE_LATE) h = `<span class="pill done_late${r.lateMin >= 15 ? ' big' : ''}">ส่งแล้ว ช้า ${dur(r.lateMin)}</span>`;
   else h = `<span class="pill done_on">ส่งแล้ว ตรงเวลา</span>`;
   if (r.scanned) h += `<span class="pill scan">ยิงแล้ว ยังไม่ขึ้นรถ</span>`;

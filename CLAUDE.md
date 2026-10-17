@@ -50,7 +50,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 2. **Shipped / Complete** = Shipping Confirm `CONFIRMED`, or Shipping Time present AND shipping Truck License
    (the 2nd `Truck License` column, column Y) not blank and not all zeros.
 3. **Scanned, not loaded (ยิงแล้ว ยังไม่ขึ้นรถ)** = Shipping Time present but no valid truck → counts as NOT shipped.
-4. Not shipped: due < now → Overdue (เลยกำหนด), else Pending (รอส่ง).
+4. Not shipped: due < now → Overdue (เลยกำหนด), else Pending (รอส่ง). Pending with due ≤ 30 min away (`SOON_MIN`) → "ใกล้ถึง Due"
+   warning (amber pill, overview strip, KPI/tile counts, truck chip); a truck is "soon" when not left and Due start is ≤ 30 min away.
 5. **Pallet / Rack** = distinct `Pallet No.`; RFID No. all zeros → Rack, otherwise Pallet. Boxes = sum of `Recept Box Count`.
 6. **Uploads**: DataSlide upload replaces all old slide data. WMS is ONE file for both warehouses, split by
    Window Name (`1…` → WH1, `4…` → WH4, other rows skipped with a warning); a warehouse with no rows in the file
