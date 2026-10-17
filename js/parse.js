@@ -211,7 +211,7 @@ export async function parseIlmsFile(file) {
   if (h < 0) throw new Error('ไม่พบหัวคอลัมน์ Truckplan No / Delivery Date ในไฟล์ ILMS');
   const H = rows[h];
   const c = (n) => colIndex(H, n);
-  const C = { tp: c('Truckplan No'), dt: c('Delivery Date'), tr: c('Truck License'), ms: c('Milestone'), from: c('Location From') };
+  const C = { tp: c('Truckplan No'), dt: c('Delivery Date'), ado: c('Actual Time Depart Origin'), tr: c('Truck License'), ms: c('Milestone'), from: c('Location From') };
   const clean = (v) => str(v).replace(/^="?|"$/g, ''); // Excel-style ="72-2155"
   const out = [];
   let other = 0;
@@ -220,8 +220,10 @@ export async function parseIlmsFile(file) {
     const tp = clean(r[C.tp]).toUpperCase();
     if (!tp) continue;
     if (!/^\d{8}[14][DN]\d+$/.test(tp)) { other++; continue; }
-    const dt = toDateTime(r[C.dt]);
-    out.push({ tp, dt: fmtKey(dt), tr: C.tr >= 0 ? clean(r[C.tr]) : '', ms: C.ms >= 0 ? clean(r[C.ms]) : '',
+    // departure: Actual Time Depart Origin when filled, else Delivery Date (ds = which one was used: 'O' / 'D')
+    const ado = C.ado >= 0 ? toDateTime(r[C.ado]) : null;
+    const dt = ado || toDateTime(r[C.dt]);
+    out.push({ tp, dt: fmtKey(dt), ds: ado ? 'O' : 'D', tr: C.tr >= 0 ? clean(r[C.tr]) : '', ms: C.ms >= 0 ? clean(r[C.ms]) : '',
       from: C.from >= 0 ? clean(r[C.from]) : '' });
   }
   return { rows: out, other };

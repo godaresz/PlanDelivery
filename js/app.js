@@ -665,7 +665,7 @@ function renderTrips(list, rows) {
       <td class="wins">${esc([...x.wins].sort().join(', '))}</td>
       <td class="n">${n0(x.p.size)} / ${n0(x.r.size)}</td><td class="n">${x.box.toLocaleString()}</td>
       <td class="t">${dueRange(x.dueStart, x.dueEnd)}</td>
-      <td class="t">${x.dep && x.left ? `${fmtShow(x.dep)} <span class="src-tag ${x.src === 'ILMS' ? 'ilms' : ''}">${x.src}</span>`
+      <td class="t">${x.dep && x.left ? `${fmtShow(x.dep)} <span class="src-tag ${x.src === 'ILMS' ? 'ilms' : ''}" title="${x.src === 'ILMS' ? (x.ilms && x.ilms.ds === 'O' ? 'ILMS: Actual Time Depart Origin' : 'ILMS: Delivery Date (ยังไม่มี Actual Time Depart Origin)') : 'WMS: เวลา Shipping ล่าสุด'}">${x.src === 'ILMS' && x.ilms && x.ilms.ds === 'D' ? 'ILMS·DD' : x.src}</span>`
         : x.dep ? `<span class="hint">กำหนด ${fmtShow(x.dep)}</span>` : '<span class="z">-</span>'}</td>
       <td class="n">${lateCell(x)}</td><td>${tripStatus(x)}</td></tr>`).join('')
       || `<tr><td colspan="${cols}" class="hint">${anySn || !rows.length ? 'ไม่มีรถในช่วงเวลานี้'

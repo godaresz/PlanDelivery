@@ -82,7 +82,9 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    A truck belongs to the WH in its 9th digit (it may also carry the other WH's pallets; counted once, under its owner).
    Window table's truck column counts only these trucks (rows on other-shift trucks still count as pallets); the truck
    page notes other-shift trucks carrying rows due in range and in-shift trucks carrying only rows due outside it.
-10. **ILMS** (Truck Inquiry export): `Truckplan No` = WMS Shipping No.; `Delivery Date` = actual departure. Only WH1/WH4
+10. **ILMS** (Truck Inquiry export): `Truckplan No` = WMS Shipping No.; actual departure = `Actual Time Depart Origin`,
+   or `Delivery Date` when that is blank (17/10/2026; row field `ds` = 'O' / 'D', truck tag "ILMS·DD" when Delivery Date was used;
+   a COMPLETE-locked truck still takes a later file's Depart Origin once). Only WH1/WH4
    numbers kept; uploads merge by Truckplan No (newer wins unless the stored truck is `COMPLETE` = locked), never deleted.
    Departure = ILMS Delivery Date if matched, else WMS (left once any row shipped). Late (ออกช้า) = departure after
    Due start (ILMS) / a row shipped after its due (WMS fallback). Remaining = not left; overdue = Due start passed.

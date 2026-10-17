@@ -206,7 +206,11 @@ export function mergeIlms(oldRows, newRows) {
   let skipped = 0;
   for (const r of newRows) {
     const o = m.get(r.tp);
-    if (o && ilmsLocked(o)) { skipped++; continue; }
+    if (o && ilmsLocked(o)) {
+      // a COMPLETE truck stays locked, but its departure may still be upgraded to Actual Time Depart Origin once
+      if (o.ds !== 'O' && r.ds === 'O' && r.dt) m.set(r.tp, { ...o, dt: r.dt, ds: 'O' });
+      skipped++; continue;
+    }
     m.set(r.tp, r);
   }
   return { rows: [...m.values()], skipped };
