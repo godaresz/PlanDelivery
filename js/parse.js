@@ -211,7 +211,7 @@ export async function parseIlmsFile(file) {
   if (h < 0) throw new Error('ไม่พบหัวคอลัมน์ Truckplan No / Delivery Date ในไฟล์ ILMS');
   const H = rows[h];
   const c = (n) => colIndex(H, n);
-  const C = { tp: c('Truckplan No'), dt: c('Delivery Date'), ado: c('Actual Time Depart Origin') >= 0 ? c('Actual Time Depart Origin') : 15, // column P if the header text differs tr: c('Truck License'), ms: c('Milestone'), from: c('Location From') };
+  const C = { tp: c('Truckplan No'), dt: c('Delivery Date'), ado: c('Actual Time Depart Origin') >= 0 ? c('Actual Time Depart Origin') : 15 /* column P if the header text differs */, tr: c('Truck License'), ms: c('Milestone'), from: c('Location From') };
   const clean = (v) => str(v).replace(/^="?|"$/g, ''); // Excel-style ="72-2155"
   const out = [];
   let other = 0;
