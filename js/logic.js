@@ -407,8 +407,6 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
   return { buckets: [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key)), groups: list, via };
 }
 
-// whole trucks: total = ceil(sum of decimals); each cell gets floor(decimal), the remaining trucks go to the largest
-// remainders, so cells add up exactly to the total (largest remainder method)
 // Est for trucks already in the history (back-test): each Dock|Window node of each truck adds its pallets (racks ×
 // rackFactor) ÷ the load of its group in the truck's shift (window name xDnn / xNnn first, like estimateTrucks).
 export function estimateHistTrucks(trucks, model) {
@@ -425,8 +423,12 @@ export function estimateHistTrucks(trucks, model) {
   }
   return est;
 }
+// whole trucks: total = sum of decimals rounded to the nearest truck (.5 up; at least 1 when there is any work), so
+// 34.03 -> 34 (the small rest rides on the other trucks) and 34.6 -> 35; each cell gets floor(decimal), the remaining
+// trucks go to the largest remainders, so cells add up exactly to the total (largest remainder method)
 export function allocateWhole(values) {
-  const total = Math.ceil(values.reduce((a, v) => a + v, 0) - 1e-9);
+  const sum = values.reduce((a, v) => a + v, 0);
+  const total = sum > 1e-9 ? Math.max(1, Math.round(sum + 1e-9)) : 0;
   const out = values.map((v) => Math.floor(v + 1e-9));
   let left = total - out.reduce((a, v) => a + v, 0);
   const order = values.map((v, i) => [v - Math.floor(v + 1e-9), i]).sort((a, b) => b[0] - a[0]);

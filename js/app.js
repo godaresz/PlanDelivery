@@ -1016,7 +1016,7 @@ function renderEst(all, scope) {
         <td class="n">${f1(g.cap.D)}<div class="est-u">${g.D.length} คัน</div></td><td class="n">${f1(g.cap.N)}<div class="est-u">${g.N.length} คัน</div></td></tr>`).join('')}</tbody></table></div></details>`;
     if (!est.groups.length) return `<section class="panel"><div class="panel-h"><h2>${wh}</h2></div><p class="hint">${cmp ? 'ไม่มีงานในช่วงเวลานี้' : 'ไม่มีงานค้างในช่วงเวลานี้'}</p>${ref}</section>`;
     if (!model.whMean) return `<section class="panel"><div class="panel-h"><h2>${wh}</h2></div><p class="hint">ยังไม่มีประวัติรถที่ Confirm แล้ว จึงยังประมาณการไม่ได้ — อัปโหลด WMS ที่มีรายการ Confirm และ Shipping No. ก่อน</p></section>`;
-    // whole trucks: total = ceil(sum of decimals), shared out to cells by largest remainder (cells add up to the total)
+    // whole trucks: total = sum of decimals rounded (.5 up), shared out to cells by largest remainder (cells add up to the total)
     const cellList = est.groups.flatMap((o) => [...o.cells.values()]);
     const alloc = allocateWhole(cellList.map((x) => x.est));
     cellList.forEach((x, i) => { x.n = alloc.out[i]; });
@@ -1088,7 +1088,7 @@ function renderEst(all, scope) {
     แล้วคิด Est = หน่วยค้างของกลุ่ม (Pallet + Rack) ÷ หน่วยเฉลี่ยต่อคันของกลุ่มในกะนั้น (กะดูจากชื่อ Window เช่น 1D05 = กะเช้า, 1N05 = กะดึก; ถ้าไม่มีดูจากเวลา Due;
     น้อยกว่า 3 คันใช้ค่าของกลุ่ม หรือค่าเฉลี่ย WH) · ประวัติรถเก็บสรุปไว้แยก ใช้ได้ทั้งหมดแม้ข้อมูลถูกย้ายเข้าประวัติแล้ว ·
     Rack คิดพื้นที่เทียบ Pallet ตามประวัติ (รถขน Pallet ล้วน ÷ รถขน Rack ล้วน) · Window ที่ไม่เคยมีในประวัติ จัดกลุ่มจาก Part No. แล้ว Supplier ·
-    จำนวนรถเต็มคัน = ปัดขึ้นจากผลรวมทศนิยมครั้งเดียว แล้วแบ่งลงแต่ละช่องตามเศษที่มากที่สุด (ผลรวมทุกช่องเท่ากับยอดรวม) · ${notes.join(' · ')}`;
+    จำนวนรถเต็มคัน = ปัดผลรวมทศนิยมครั้งเดียวเป็นคันที่ใกล้ที่สุด (.5 ขึ้นไปปัดขึ้น เช่น 34.0 → 34, 34.6 → 35) แล้วแบ่งลงแต่ละช่องตามเศษที่มากที่สุด (ผลรวมทุกช่องเท่ากับยอดรวม) · ${notes.join(' · ')}`;
   return totalTrucks;
 }
 

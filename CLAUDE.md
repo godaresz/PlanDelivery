@@ -95,8 +95,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    - Rack space = rackFactor pallets (mean pallets on pallet-only trucks ÷ mean racks on rack-only trucks; ≈1.0 now).
    - Group load per truck (pallet-equivalents) by shift D/N (< 3 trucks → group mean → WH shift mean). A pallet's shift
      comes from its Window name (xDnn / xNnn), else from its due time.
-   - Each pallet adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = ceil(sum), shared out
-     to cells by largest remainder so cells add up to the total.
+   - Each pallet adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = sum rounded to the nearest truck (.5 up, min 1;
+     changed from ceil on 17/10/2026 — 34.0x showed 35), shared out to cells by largest remainder so cells add up to the total.
    - Mode "เทียบ Est กับที่ใช้จริง": all pallets in the filter (shipped + open), learning only from trucks dated before
      the range start. Actual per cell = sum over shipped pallets of 1 ÷ (pallets on its truck), so actual trucks are shared
      out by pallets and add up; the comparison uses the estimate of the shipped part only (estS) so an unfinished range
@@ -107,7 +107,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
      inside the shift — its Shipping Time if that is in the shift, else the due moved to the nearest shift edge
      (`shipBinRows`); a truck's Due start is clamped the same way on the Plan page.
 12. **Hourly truck plan (page `#plan`)**: all pallets in the view (shipped + open), Est model in 1-hour buckets of the due
-   used (`hourBucket`); whole trucks per WH by largest remainder (adds up to ceil of the WH sum). Shown with: trucks whose
+   used (`hourBucket`); whole trucks per WH by largest remainder (adds up to the rounded WH sum). Shown with: trucks whose
    Due start is in the hour (Shipping No., value labels on the chart line; table also shows pallets+racks that already have a Shipping No.) and trucks that left in the hour (ILMS/WMS departure, even outside the range).
    Backlog rows due before the start go to one "ค้างก่อนช่วง" row.
 
