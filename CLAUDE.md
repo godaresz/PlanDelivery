@@ -86,7 +86,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    or `Delivery Date` when that is blank (17/10/2026; row field `ds` = 'O' / 'D', truck tag "ILMS·DD" when Delivery Date was used;
    a COMPLETE-locked truck still takes a later file's Depart Origin once). Only WH1/WH4
    numbers kept; uploads merge by Truckplan No (newer wins unless the stored truck is `COMPLETE` = locked), never deleted.
-   Departure = ILMS Delivery Date if matched, else WMS (left once any row shipped). Late (ออกช้า) = departure after
+   Departure = ILMS time above if matched, else WMS (left once any row shipped). Late (ออกช้า) = departure after
    Due start (ILMS) / a row shipped after its due (WMS fallback). Remaining = not left; overdue = Due start passed.
 11. **Truck estimate (Est, page `#est`)**: open (not shipped) pallets in the current filter. Each pallet counts once
    (bucket of its earliest due; Dock|Window, Part No., Supplier of its first row). Buckets = due day × period ตี 00–05 /
