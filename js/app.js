@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, SOON_MIN, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -8,7 +8,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const WHS = ['WH1', 'WH4'];
 
 const DEFAULT_RULES = {
-  keepDays: 7, staleWmsMin: 30, staleIlmsMin: 30,
+  keepDays: 7, staleWmsMin: 30, staleIlmsMin: 30, soonMin: 30,
   groups: [
     { docks: ['S0', 'S2', 'S7', 'S9'], map: [{ orig: '07:30', slide: '08:30' }, { orig: '08:30', slide: '09:30' }] },
     { docks: ['S5', 'S6'], map: [{ orig: '07:30', slide: '09:30' }, { orig: '08:30', slide: '10:30' }] },
@@ -302,6 +302,7 @@ async function reload() {
     S.data = await store.loadAll();
     S.rules = S.data.rules && S.data.rules.groups ? S.data.rules : DEFAULT_RULES;
     S.slideMap = slideMapOf(S.data.slide.data);
+    setSoonMin(S.rules.soonMin);
     S.hist = S.data.truckhist.data || { WH1: {}, WH4: {} };
     S.ilmsMap = new Map((S.data.ilms.data || []).map((r) => [r.tp, { ...r, dt: fromKey(r.dt) }]));
     renderSources();
@@ -600,7 +601,7 @@ function truckTiles(T) {
     tile('overdue', 'ออกช้า', T.late, T.left ? `${Math.round((T.late / T.left) * 100)}% ของที่ออกแล้ว` : ''),
   ].join('');
 }
-const TRUCK_CHIPS = [['ALL', 'ทั้งหมด'], ['LEFT', 'ออกแล้ว'], ['LATE', 'ออกช้า'], ['REMAIN', 'ยังไม่ออก'], ['SOON', `ใกล้ถึง Due (≤ ${SOON_MIN} นาที)`], ['OD', 'ยังไม่ออก · เลยกำหนด']];
+const TRUCK_CHIPS = [['ALL', 'ทั้งหมด'], ['LEFT', 'ออกแล้ว'], ['LATE', 'ออกช้า'], ['REMAIN', 'ยังไม่ออก'], ['SOON', 'ใกล้ถึง Due'], ['OD', 'ยังไม่ออก · เลยกำหนด']];
 const truckFilter = { ALL: () => true, LEFT: (x) => x.left, LATE: (x) => x.late, REMAIN: (x) => !x.left, SOON: (x) => x.soon, OD: (x) => x.od };
 
 function renderTrips(list, rows) {
@@ -627,7 +628,7 @@ function renderTrips(list, rows) {
       <td class="n">${T.late}</td><td class="n">${T.od}</td><td class="n">${list.filter((x) => x.src === 'ILMS').length}</td></tr></tfoot>` : '';
 
   const cnt = Object.fromEntries(TRUCK_CHIPS.map(([k]) => [k, list.filter(truckFilter[k]).length]));
-  $('#truckChips').innerHTML = TRUCK_CHIPS.map(([k, l]) => `<button class="chip${S.truckSt === k ? ' on' : ''}" data-tst="${k}">${l} (${cnt[k]})</button>`).join('');
+  $('#truckChips').innerHTML = TRUCK_CHIPS.map(([k, l]) => `<button class="chip${S.truckSt === k ? ' on' : ''}" data-tst="${k}">${k === 'SOON' ? `${l} (≤ ${SOON_MIN} นาที)` : l} (${cnt[k]})</button>`).join('');
   $$('#truckChips .chip').forEach((c) => c.addEventListener('click', () => { S.truckSt = c.dataset.tst; render(); }));
   const shown = list.filter(truckFilter[S.truckSt] || truckFilter.ALL);
 
@@ -1419,6 +1420,7 @@ function openRules() {
   draft = JSON.parse(JSON.stringify(S.rules));
   $('#keepDays').value = draft.keepDays || 7;
   $('#staleWms').value = draft.staleWmsMin || 30; $('#staleIlms').value = draft.staleIlmsMin || 30;
+  $('#soonMin').value = draft.soonMin || 30;
   drawRules();
   $('#rulesErr').textContent = '';
   $('#dlgRules').showModal();
@@ -1569,6 +1571,7 @@ function bind() {
     draft.staleWmsMin = Math.max(5, Math.min(4320, Number($('#staleWms').value) || 30));
     draft.staleIlmsMin = Math.max(5, Math.min(4320, Number($('#staleIlms').value) || 30));
     delete draft.staleWms; delete draft.staleIlms;
+    draft.soonMin = Math.max(5, Math.min(240, Number($('#soonMin').value) || 30));
     try { await lockConfirmedDues(); await store.saveRules(draft); $('#dlgRules').close(); toast('บันทึกกฎแล้ว'); await reload(); }
     catch (err) { $('#rulesErr').textContent = 'บันทึกไม่สำเร็จ: ' + err.message; }
   });

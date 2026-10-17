@@ -58,7 +58,8 @@ export function lockDues(rows, slideMap, rules) {
   return n;
 }
 
-export const SOON_MIN = 30; // warn this many minutes before a due
+export let SOON_MIN = 30; // warn this many minutes before a due (rules.soonMin, set from the rules dialog)
+export function setSoonMin(m) { SOON_MIN = Math.max(5, Math.min(240, Number(m) || 30)); }
 export function evaluate(rows, slideMap, rules, now) {
   return rows.map((r) => {
     const wmsDue = fromKey(r.dd);
