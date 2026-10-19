@@ -1149,7 +1149,7 @@ function renderKpi() {
   $('#kpiTiles').innerHTML = [
     tile('trip', `รถที่ใช้ ${days} วัน`, T.n.toLocaleString(), 'คัน', `เฉลี่ย ${dayN ? (T.n / dayN).toFixed(1) : 0} คัน/วัน · ${T.p.toLocaleString()} Pallet · ${T.r.toLocaleString()} Rack`),
     tile('done', 'ออกตรงเวลา', pct(T.on, T.dep) ?? '-', '%', `${T.on.toLocaleString()} จาก ${T.dep.toLocaleString()} คันที่มีเวลา ILMS`),
-    tile('overdue', 'ออกช้า', T.late.toLocaleString(), 'คัน', T.late ? `ช้าเฉลี่ย ${dur(Math.round(T.lateMin / T.late))}` : ''),
+    tile('overdue', 'ออกช้า', pct(T.late, T.dep) ?? '-', '%', `${T.late.toLocaleString()} จาก ${T.dep.toLocaleString()} คันที่มีเวลา ILMS${T.late ? ` · ช้าเฉลี่ย ${dur(Math.round(T.lateMin / T.late))}` : ''}`),
     tile('pending', 'สาเหตุช้าอันดับ 1', topR ? topR[1] : '-', topR ? 'คัน' : '', topR ? esc(REASON_TH[topR[0]] || topR[0]) : 'ยังไม่มีการระบุเหตุผล'),
   ].join('');
   const notes = [];
