@@ -453,3 +453,40 @@ code { font-family: 'IBM Plex Mono', monospace; font-size: 12px; background: #F3
 #btnNotify.on { background: #FEF3C7; color: #92400E; border-color: #F59E0B; }
 .c-on { color: #10B981; }
 #repRow { grid-template-columns: none; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* escalation: truck still not left long after its Due start */
+.pill.overdue.esc { background: #EF4444; color: #fff; animation: escBlink 1.2s ease-in-out infinite; }
+.pill.overdue.esc::before { background: #fff; }
+tr.esc-row td { background: #FEF2F2; }
+@keyframes escBlink { 50% { box-shadow: 0 0 0 5px rgba(239,68,68,.28); } }
+/* late / overdue reasons */
+.btn.xs { padding: 2px 8px; font-size: 12px; border-radius: 8px; }
+.btn.rsn-add { border: 1px dashed #F59E0B; color: #92400E; background: #FFFBEB; }
+.rsn { display: inline-block; background: #F3F4F6; color: #374151; border-radius: 8px; padding: 2px 8px; font-size: 12.5px; }
+.rsn small { color: #6B7280; }
+.rsn-s { font-size: 12px; color: #6B7280; margin-top: 2px; }
+.rsn-cell { white-space: nowrap; }
+.dlg select, .dlg textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--line, #E5E7EB); border-radius: 10px; }
+/* data check page */
+.nav .cnt.amber { background: #F59E0B; color: #fff; }
+.chk-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.chk-tile { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 12px; background: #F0FDF4; border: 1px solid #BBF7D0;
+  color: var(--ink); text-decoration: none; transition: transform .15s, box-shadow .15s; }
+.chk-tile:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+.chk-tile.bad { background: #FFFBEB; border-color: #FCD34D; }
+.chk-tile .ci { font-size: 18px; }
+.chk-tile .cv { font-size: 22px; font-weight: 700; }
+.chk-tile .cv small { font-size: 12px; font-weight: 500; color: var(--ink-2); }
+.chk-tile .cl { font-size: 12.5px; color: var(--ink-2); }
+details.chk > summary { cursor: pointer; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; list-style: none; }
+details.chk > summary::-webkit-details-marker { display: none; }
+details.chk > summary::after { content: '▾'; margin-left: auto; color: var(--ink-2); transition: transform .2s; }
+details.chk:not([open]) > summary::after { transform: rotate(-90deg); }
+details.chk .table-wrap { max-height: 420px; overflow: auto; }
+/* KPI trend page */
+.kpi-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 14px; }
+.kpi-grid > .panel { min-width: 0; }
+@media (max-width: 1000px) { .kpi-grid { grid-template-columns: 1fr; } }
+.plan-chart .bar.n { fill: #93C5FD; }
+.lg-bar.n { background: #93C5FD; }
+td.plan-bar { vertical-align: middle; min-width: 80px; }
+td.plan-bar span { display: block; height: 10px; border-radius: 99px; background: linear-gradient(90deg, #BFDBFE, #2563EB); }

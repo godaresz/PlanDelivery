@@ -192,6 +192,7 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
       x.lateMin = x.late ? x.maxLate : null;
     }
     x.od = !x.left && !!x.dueStart && x.dueStart < now;
+    x.odMin = x.od ? Math.floor((now - x.dueStart) / 60000) : null; // minutes past Due start (escalation)
     x.soonMin = !x.left && !x.od && x.dueStart ? Math.ceil((x.dueStart - now) / 60000) : null;
     x.soon = x.soonMin !== null && x.soonMin <= SOON_MIN; // Due start within 30 minutes, truck not left yet
     // owning warehouse = 9th digit of the Shipping No. (a truck may also carry the other WH's pallets)
@@ -225,7 +226,8 @@ export const PERIODS = [['T', 'ตี', '00:00–05:59'], ['M', 'เช้า', 
 export const periodOf = (d) => PERIODS[Math.floor(d.getHours() / 6)][0];
 
 // ---------- truck history (compact summary kept for Est, independent of the archive) ----------
-// trucks: { sn: { v: 2, s: 'D'|'N', d: 'YYYYMMDD', p: pallets, r: racks, n: { 'Dock|Window': [pallets, racks] } } }
+// trucks: { sn: { v: 2, s: 'D'|'N', d: 'YYYYMMDD', p: pallets, r: racks, n: { 'Dock|Window': [pallets, racks] },
+//               ds: earliest due used ('YYYY-MM-DD HH:mm', for the KPI trend) } }
 // links:  { parts: { 'Part No.': 'Dock|Window' }, sups: { Supplier: 'Dock|Window' } }  (node it was shipped with most)
 // pallets / racks = distinct Pallet No. by type (RFID all zeros = Rack).
 export const shiftOfTime = (dt) => { const m = dt.getHours() * 60 + dt.getMinutes(); return m >= 450 && m < 1200 ? 'D' : 'N'; };
@@ -234,8 +236,11 @@ export const truckAcc = () => Object.assign(new Map(), { parts: new Map(), sups:
 export function truckAccAdd(acc, rows) {
   for (const r of rows) {
     if (!r.sn || r.cf !== 1) continue; // learn only from confirmed (final) shipments
-    if (!acc.has(r.sn)) acc.set(r.sn, { P: new Set(), R: new Set(), n: new Map() });
+    if (!acc.has(r.sn)) acc.set(r.sn, { P: new Set(), R: new Set(), n: new Map(), ds: '' });
     const t = acc.get(r.sn), k = `${r.d || '-'}|${r.w || '-'}`, pl = r.pl || r.k;
+    // due used: evaluated rows carry r.due, raw rows the locked due (r.du) or the WMS due
+    const du = r.due instanceof Date ? fmtKey(r.due) : r.du || r.dd || '';
+    if (du && (!t.ds || du < t.ds)) t.ds = du;
     (r.rk ? t.R : t.P).add(pl);
     if (!t.n.has(k)) t.n.set(k, { P: new Set(), R: new Set() });
     const x = t.n.get(k);
@@ -259,6 +264,7 @@ export function truckAccDone(acc) {
     const n = {};
     for (const [k, x] of t.n) n[k] = [x.P.size, x.R.size];
     out[sn] = { v: 2, s: m ? m[2].toUpperCase() : '', d: m ? m[1] : '', p: t.P.size, r: t.R.size, n };
+    if (t.ds) out[sn].ds = t.ds;
   }
   return out;
 }
@@ -276,6 +282,7 @@ export function mergeTruckHist(old, add, keepDays = 365, now = new Date()) {
       n[k] = [Math.max(a[0], v[0]), Math.max(a[1], v[1])];
     }
     out[sn] = { ...o, p: Math.max(o.p, t.p), r: Math.max(o.r, t.r), n };
+    if (t.ds && (!o.ds || t.ds < o.ds)) out[sn].ds = t.ds;
   }
   const c = new Date(now.getTime() - keepDays * 86400000);
   const cut = `${c.getFullYear()}${String(c.getMonth() + 1).padStart(2, '0')}${String(c.getDate()).padStart(2, '0')}`;

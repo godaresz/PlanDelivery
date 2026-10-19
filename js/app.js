@@ -8,7 +8,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const WHS = ['WH1', 'WH4'];
 
 const DEFAULT_RULES = {
-  keepDays: 7, staleWmsMin: 30, staleIlmsMin: 30, soonMin: 30,
+  keepDays: 7, staleWmsMin: 30, staleIlmsMin: 30, soonMin: 30, escMin: 30, scanMin: 60,
   groups: [
     { docks: ['S0', 'S2', 'S7', 'S9'], map: [{ orig: '07:30', slide: '08:30' }, { orig: '08:30', slide: '09:30' }] },
     { docks: ['S5', 'S6'], map: [{ orig: '07:30', slide: '09:30' }, { orig: '08:30', slide: '10:30' }] },
@@ -279,9 +279,10 @@ async function rebuildHist() {
     const acc = truckAcc();
     for (let i = 0; i < days.length; i++) {
       toast(`กำลังสร้างสรุปรถ ${wh}: ประวัติวันที่ ${i + 1}/${days.length}…`, false, 600000);
-      truckAccAdd(acc, await store.loadArchiveDay(wh, days[i]));
+      // evaluated so each truck also keeps its due start (KPI trend) as the app shows it
+      truckAccAdd(acc, evaluate(await store.loadArchiveDay(wh, days[i]), S.slideMap, S.rules.groups || [], new Date()));
     }
-    truckAccAdd(acc, S.data[wh].data || []);
+    truckAccAdd(acc, evaluate(S.data[wh].data || [], S.slideMap, S.rules.groups || [], new Date()));
     Object.assign(hist[wh], truckAccDone(acc)); // rebuilt trucks replace their old summary
     const old = (prev.links && prev.links[wh]) || { parts: {}, sups: {} }, ln = truckAccLinks(acc);
     hist.links[wh] = { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } };
@@ -332,6 +333,7 @@ async function reload() {
     S.slideMap = slideMapOf(S.data.slide.data);
     setSoonMin(S.rules.soonMin);
     S.hist = S.data.truckhist.data || { WH1: {}, WH4: {} };
+    S.reasons = S.data.reasons || {};
     S.ilmsMap = new Map((S.data.ilms.data || []).map((r) => [r.tp, { ...r, dt: fromKey(r.dt) }]));
     // page open: always today; later updates follow "now" only while the user is looking at now (a past day stays put)
     if (!S.loadedOnce || viewingNow()) rollToToday();
@@ -512,6 +514,8 @@ function renderAll() {
   const estTotal = renderEst(all, scope);
   renderPlan(all, scope, trips); // also keeps the nav badge current on other pages
   renderDetail(rows);
+  renderCheck(all, scope, trips);
+  renderKpi();
   const badge = (id, n, cls = '') => { const el = $(id); el.textContent = n || ''; el.className = 'cnt ' + cls; };
   badge('#cntWin', byWindow(rows).filter((x) => x.od.p.size + x.od.r.size > 0).length, 'red');
   badge('#cntTruck', trips.filter((x) => !x.left).length, trips.some((x) => x.od) ? 'red' : '');
@@ -622,16 +626,59 @@ function lateCell(x) {
 function tripStatus(x) {
   if (x.left) return x.late ? `<span class="pill done_late${x.lateMin >= 15 ? ' big' : ''}">ออกแล้ว · ช้า</span>`
     : '<span class="pill done_on">ออกแล้ว · ตรงเวลา</span>';
-  if (x.loading) return `<span class="pill ${x.od ? 'overdue' : 'loading'}">ขึ้นรถแล้ว · รอ ILMS${x.od ? ' · เลย Due' : ''}</span>`;
-  if (x.od) return '<span class="pill overdue">ยังไม่ออก · เลยกำหนด</span>';
+  const esc2 = isEsc(x) ? ' esc' : '', past = x.od ? (x.odMin >= 1 ? ` · เลย Due ${dur(x.odMin)}` : ' · เพิ่งเลย Due') : '';
+  if (x.loading) return `<span class="pill ${x.od ? 'overdue' : 'loading'}${esc2}">ขึ้นรถแล้ว · รอ ILMS${past}</span>`;
+  if (x.od) return `<span class="pill overdue${esc2}">ยังไม่ออก${past}</span>`;
   return x.soon ? `<span class="pill soon">ยังไม่ออก · อีก ${x.soonMin} นาทีถึง Due</span>` : '<span class="pill pending">ยังไม่ออก</span>';
+}
+// escalation: a truck still not left this many minutes after its Due start (rules.escMin, default 30)
+const escMin = () => Math.max(5, Math.min(600, Number(S.rules.escMin) || 30));
+const isEsc = (x) => !!x.od && x.odMin >= escMin();
+// reasons for a late / overdue truck (kept in Firestore doc "reasons", entered by signed-in editors)
+const REASONS = [['TRUCK', 'รถมาช้า / รถไม่พอ'], ['GOODS', 'ของไม่พร้อม / ผลิตไม่ทัน'], ['LOAD', 'โหลดช้า / คนไม่พอ'], ['DOCK', 'Dock ไม่ว่าง'],
+  ['DOC', 'รอเอกสาร'], ['QC', 'ปัญหาคุณภาพ / แพ็ก'], ['SYS', 'ระบบ / ข้อมูล (WMS, ILMS)'], ['CUST', 'ลูกค้าขอเลื่อน'], ['OTHER', 'อื่น ๆ']];
+const REASON_TH = Object.fromEntries(REASONS);
+const needReason = (x) => !!(x.late || x.od);
+const reasonTxt = (sn) => { const v = S.reasons && S.reasons[sn]; return v ? REASON_TH[v.c] + (v.t ? ` — ${v.t}` : '') : ''; };
+function reasonCell(x) {
+  const v = S.reasons && S.reasons[x.sn];
+  if (v) {
+    const tip = `${REASON_TH[v.c] || v.c}${v.t ? ': ' + v.t : ''} (${v.by || ''} ${v.at ? fmtShow(new Date(v.at)) : ''})`;
+    return `<span class="rsn" title="${esc(tip)}">${esc(REASON_TH[v.c] || v.c)}${v.t ? ` <small>${esc(v.t)}</small>` : ''}</span>`
+      + (S.user ? ` <button class="btn xs ghost" data-rsn="${esc(x.sn)}" title="แก้เหตุผล">✎</button>` : '');
+  }
+  if (!needReason(x)) return '';
+  return S.user ? `<button class="btn xs rsn-add" data-rsn="${esc(x.sn)}">+ เหตุผล</button>` : '<span class="z">ยังไม่ระบุ</span>';
+}
+function bindReasonBtns(root) {
+  $$('[data-rsn]', root).forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); openReason(b.dataset.rsn); }));
+}
+function openReason(sn) {
+  const v = (S.reasons && S.reasons[sn]) || {};
+  $('#rsnSn').textContent = sn;
+  $('#rsnCode').innerHTML = REASONS.map(([k, l]) => `<option value="${k}"${v.c === k ? ' selected' : ''}>${l}</option>`).join('');
+  $('#rsnNote').value = v.t || '';
+  $('#rsnInfo').textContent = v.at ? `บันทึกโดย ${v.by || '-'} · ${fmtShowFull(new Date(v.at))}` : '';
+  $('#btnRsnDel').hidden = !v.c;
+  $('#dlgReason').dataset.sn = sn;
+  $('#dlgReason').showModal();
+}
+async function saveReasonDlg(del) {
+  const sn = $('#dlgReason').dataset.sn;
+  try {
+    const v = del ? null : { c: $('#rsnCode').value, t: $('#rsnNote').value.trim().slice(0, 200), by: (S.user && S.user.email) || '', at: new Date().toISOString() };
+    await store.saveReason(sn, v);
+    S.reasons = { ...S.reasons }; if (v) S.reasons[sn] = v; else delete S.reasons[sn];
+    $('#dlgReason').close(); render(true);
+    toast(del ? `ลบเหตุผลของ ${sn} แล้ว` : `บันทึกเหตุผลของ ${sn} แล้ว`);
+  } catch (e) { toast('บันทึกไม่สำเร็จ: ' + e.message, true, 8000); }
 }
 function truckTiles(T) {
   const tile = (cls, lbl, v, det = '') => `<div class="kpi ${cls}"><div class="lbl">${lbl}</div><div class="val">${v} <small>คัน</small></div><div class="det">${det}</div></div>`;
   return [
     tile('trip', 'ใช้รถทั้งหมด', T.used, 'ตาม Shipping No.'),
     tile('done', 'ส่งแล้ว (ออกแล้ว)', T.left, `ตรงเวลา ${T.left - T.late} · ช้า ${T.late}`),
-    tile('pending', 'เหลือ (ยังไม่ออก)', T.remain, [T.od ? `<span class="c-late">เลยกำหนดแล้ว ${T.od} คัน</span>` : '',
+    tile('pending', 'เหลือ (ยังไม่ออก)', T.remain, [T.od ? `<span class="c-late">เลยกำหนดแล้ว ${T.od} คัน${T.esc ? ` (เกิน ${escMin()} นาที ${T.esc})` : ''}</span>` : '',
       T.soon ? `<span class="c-soon">ใกล้ถึง Due ≤ ${SOON_MIN} นาที ${T.soon} คัน</span>` : '',
       T.loading ? `ขึ้นรถแล้ว รอ ILMS ${T.loading} คัน` : ''].filter(Boolean).join(' · ') || 'ยังไม่ถึงกำหนด'),
     tile('overdue', 'ออกช้า', T.late, T.left ? `${Math.round((T.late / T.left) * 100)}% ของที่ออกแล้ว` : ''),
@@ -642,7 +689,7 @@ const truckFilter = { ALL: () => true, LEFT: (x) => x.left, LATE: (x) => x.late,
 
 function renderTrips(list, rows) {
   const showWh = S.wh === 'ALL';
-  const T = tripTotals(list);
+  const T = { ...tripTotals(list), esc: list.filter(isEsc).length };
   $('#tripTiles').innerHTML = list.length ? truckTiles(T) : '';
 
   // by date / shift / WH from the Shipping No.
@@ -669,7 +716,7 @@ function renderTrips(list, rows) {
   const shown = list.filter(truckFilter[S.truckSt] || truckFilter.ALL);
 
   const anySn = WHS.some((wh) => S.view.full[wh].some((r) => r.sn));
-  const cols = showWh ? 13 : 12;
+  const cols = showWh ? 14 : 13;
   $('#tripCount').textContent = list.length ? `${list.length.toLocaleString()} คัน` : '';
   // trucks of other shifts that carried rows due in this range (shipped early / late)
   const inList = new Set(list.map((x) => x.sn));
@@ -690,8 +737,8 @@ function renderTrips(list, rows) {
   $$('#tripOther a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openTruck(a.dataset.sn); }));
   $('#tblTrip').innerHTML = `<thead><tr>${showWh ? '<th>WH</th>' : ''}<th>Shipping No.</th><th>กะ</th><th class="n">Trip</th>
       <th>Truck License</th><th>Dock</th><th>Window Name</th><th class="n">Pallet / Rack</th><th class="n">กล่อง</th>
-      <th>Due เริ่ม – จบ</th><th>ออกจริง</th><th class="n">เทียบ Due เริ่ม</th><th>สถานะ</th></tr></thead>
-    <tbody>${shown.map((x) => `<tr class="clickable" data-sn="${esc(x.sn)}">
+      <th>Due เริ่ม – จบ</th><th>ออกจริง</th><th class="n">เทียบ Due เริ่ม</th><th>สถานะ</th><th>เหตุผล</th></tr></thead>
+    <tbody>${shown.map((x) => `<tr class="clickable${isEsc(x) ? ' esc-row' : ''}" data-sn="${esc(x.sn)}">
       ${showWh ? `<td>${x.whOwn}${mixTag(x)}</td>` : ''}
       <td class="t"><b>${esc(x.sn)}</b></td>
       <td>${x.info ? `${SHIFT_TH[x.info.shift]} <span class="src-tag">${fmtShow(x.info.date).slice(0, 5)}</span>` : '-'}</td>
@@ -704,10 +751,11 @@ function renderTrips(list, rows) {
       <td class="t">${x.dep && x.left ? `${fmtShow(x.dep)} <span class="src-tag ${x.src === 'ILMS' ? 'ilms' : ''}" title="${x.src === 'ILMS' ? (x.ilms && x.ilms.ds === 'O' ? 'ILMS: Actual Time Depart Origin' : 'ILMS: Delivery Date (ยังไม่มี Actual Time Depart Origin)') : 'WMS: เวลา Shipping ล่าสุด'}">${x.src === 'ILMS' && x.ilms && x.ilms.ds === 'D' ? 'ILMS·DD' : x.src}</span>`
         : x.dep ? `<span class="hint">กำหนด ${fmtShow(x.dep)}</span>`
         : x.loading && x.wmsLast ? `<span class="hint">ยิงขึ้นรถล่าสุด ${fmtShow(x.wmsLast)}</span>` : '<span class="z">-</span>'}</td>
-      <td class="n">${lateCell(x)}</td><td>${tripStatus(x)}</td></tr>`).join('')
+      <td class="n">${lateCell(x)}</td><td>${tripStatus(x)}</td><td class="rsn-cell">${reasonCell(x)}</td></tr>`).join('')
       || `<tr><td colspan="${cols}" class="hint">${anySn || !rows.length ? 'ไม่มีรถในช่วงเวลานี้'
         : 'ไฟล์ WMS ที่อัปโหลดไว้ยังไม่มีคอลัมน์ Shipping No. (AC) — อัปโหลดไฟล์ใหม่'}</td></tr>`}</tbody>`;
   $$('#tblTrip tr.clickable').forEach((tr) => tr.addEventListener('click', () => openTruck(tr.dataset.sn)));
+  bindReasonBtns($('#tblTrip'));
 }
 // a truck that also carries the other warehouse's pallets: show the split (units = pallets + racks)
 function mixTag(x) {
@@ -732,7 +780,7 @@ function renderOverview(rows, trips) {
       ${soonUnits ? `<span>งานยังไม่ส่ง <b>${soonUnits}</b> หน่วย (Pallet + Rack)</span>` : ''}`;
     $$('#ovSoon a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openTruck(a.dataset.sn); }));
   }
-  $('#ovTruckTiles').innerHTML = trips.length ? truckTiles(tripTotals(trips)) : '<p class="hint">ยังไม่มีข้อมูลรถในช่วงเวลานี้</p>';
+  $('#ovTruckTiles').innerHTML = trips.length ? truckTiles({ ...tripTotals(trips), esc: trips.filter(isEsc).length }) : '<p class="hint">ยังไม่มีข้อมูลรถในช่วงเวลานี้</p>';
   const wins = byWindow(rows).filter((x) => x.od.p.size + x.od.r.size > 0)
     .sort((a, b) => (b.od.p.size + b.od.r.size) - (a.od.p.size + a.od.r.size)).slice(0, 8);
   const max = wins.length ? wins[0].od.p.size + wins[0].od.r.size : 1;
@@ -748,7 +796,7 @@ function renderOverview(rows, trips) {
     <tbody>${open.map((x) => `<tr class="clickable" data-sn="${esc(x.sn)}"><td class="t"><b>${esc(x.sn)}</b></td>
       <td>${esc([...x.docks].sort().join(', ')) || '-'}</td>
       <td class="wins">${esc([...x.wins].sort().join(', '))}</td>
-      <td class="n">${n0(x.p.size)}</td><td class="n">${n0(x.r.size)}</td><td class="t">${dueRange(x.dueStart, x.dueEnd)}</td><td>${tripStatus(x)}</td></tr>`).join('')}</tbody></table>`
+      <td class="n">${n0(x.p.size)}</td><td class="n">${n0(x.r.size)}</td><td class="t">${dueRange(x.dueStart, x.dueEnd)}</td><td>${tripStatus(x)}${reasonTxt(x.sn) ? `<div class="rsn-s">${esc(reasonTxt(x.sn))}</div>` : ''}</td></tr>`).join('')}</tbody></table>`
     : '<p class="hint">ไม่มีรถค้าง</p>';
   $$('#ovTruck tr.clickable').forEach((tr) => tr.addEventListener('click', () => openTruck(tr.dataset.sn)));
 }
@@ -815,6 +863,12 @@ function renderPlan(all, scope, trips) {
     tot.n += sum(h, (c) => c.n); tot.est += sum(h, (c) => c.est); tot.sn += sum(h, (c) => c.sn.size);
     tot.left += sum(h, (c) => c.left.size); tot.p += sum(h, (c) => c.p); tot.r += sum(h, (c) => c.r); tot.open += sum(h, (c) => c.open); tot.hasSn += sum(h, (c) => c.hasSn);
   }
+  // Plan vs actual: running totals of Plan trucks and trucks that left, compared up to the current hour
+  let cn = 0, cl = 0;
+  const cum = new Map(list.map((h) => { cn += sum(h, (c) => c.n); cl += sum(h, (c) => c.left.size); return [h.key, { n: cn, left: cl }]; }));
+  const nowH = new Date(); nowH.setMinutes(0, 0, 0);
+  const pastH = list.filter((h) => h.before || h.t < nowH); // finished hours
+  const upTo = pastH.length ? cum.get(pastH[pastH.length - 1].key) : null;
   const peak = list.filter((h) => !h.before && sum(h, (c) => c.n) > 0).reduce((m, h) => (!m || sum(h, (c) => c.n) > sum(m, (c) => c.n) ? h : m), null);
   const hourLbl = (h) => (h.before ? 'ค้างก่อนช่วง' : `${String(h.t.getHours()).padStart(2, '0')}:00–${String(h.t.getHours()).padStart(2, '0')}:59`);
   const dayLbl = (h) => (h.before ? `Due ก่อน ${fmtShow(start)}` : fmtShow(h.t).slice(0, 5));
@@ -822,7 +876,7 @@ function renderPlan(all, scope, trips) {
   $('#planTiles').innerHTML = list.length ? [
     tile('pending', 'รถตาม Plan (Est)', tot.n, `${f1(tot.est)} คัน · ${tot.p} Pallet · ${tot.r} Rack`),
     tile('trip', 'จัดรถแล้ว (Shipping No.)', tot.sn, `นับตาม Due เริ่มของรถ · งานที่มี Shipping No. แล้ว ${tot.hasSn}/${tot.p + tot.r} หน่วย (${tot.p + tot.r ? Math.round((tot.hasSn / (tot.p + tot.r)) * 100) : 0}%)`),
-    tile('done', 'ออกแล้ว', tot.left, 'นับตามเวลาออกจริง'),
+    tile('done', 'ออกแล้ว', tot.left, upTo ? `ถึงชั่วโมงที่แล้ว Plan ${upTo.n} · ออกจริง ${upTo.left} คัน <b class="${upTo.left >= upTo.n ? 'c-dn' : 'c-od'}">(${upTo.left - upTo.n >= 0 ? '+' : ''}${upTo.left - upTo.n})</b>` : 'นับตามเวลาออกจริง'),
     tile('overdue', 'ชั่วโมงที่ใช้รถมากสุด', peak ? sum(peak, (c) => c.n) : 0, peak ? `${dayLbl(peak)} ${hourLbl(peak)}` : ''),
   ].join('') : '';
   $('#cntPlan').textContent = tot.n || '';
@@ -861,27 +915,227 @@ function renderPlan(all, scope, trips) {
     <td class="n">${c.p + c.r ? `${n0(c.p)} / ${n0(c.r)}` : '<span class="z">-</span>'}${c.open ? ` <span class="est-u c-pe">ค้าง ${c.open}</span>` : ''}</td>
     <td class="n">${c.sn.size ? `<b class="c-sn">${c.sn.size}</b> <small>คัน</small>` : '<span class="z">-</span>'}${c.p + c.r ? ` <span class="est-u">มี SN ${c.hasSn}/${c.p + c.r}</span>` : ''}</td><td class="n">${c.left.size || '<span class="z">-</span>'}</td>`;
   const maxN = Math.max(1, ...list.map((h) => sum(h, (c) => c.n)));
+  const cumCell = (h) => {
+    const c = cum.get(h.key), d = c.left - c.n, done = h.before || h.t < nowH;
+    return `<td class="n cum">${c.n} / ${c.left}${done && (c.n || c.left) ? ` <span class="est-u ${d >= 0 ? 'c-dn' : 'c-od'}">${d >= 0 ? '+' : ''}${d}</span>` : ''}</td>`;
+  };
   $('#tblPlan').innerHTML = `<thead><tr><th rowspan="2">วันที่</th><th rowspan="2">ช่วงเวลา (Due)</th>
-      ${scope.map((w) => `<th colspan="4" class="grp">${w}</th>`).join('')}${many ? '<th rowspan="2" class="n">รวมรถ (Plan)</th>' : ''}<th rowspan="2" class="plan-barh"></th></tr>
+      ${scope.map((w) => `<th colspan="4" class="grp">${w}</th>`).join('')}${many ? '<th rowspan="2" class="n">รวมรถ (Plan)</th>' : ''}<th rowspan="2" class="n" title="รถตาม Plan สะสม / รถที่ออกแล้วสะสม (ต่าง = ออกจริง − Plan)">สะสม Plan / ออกจริง</th><th rowspan="2" class="plan-barh"></th></tr>
     <tr>${scope.map(() => '<th class="n">Plan</th><th class="n">Pallet / Rack</th><th class="n">จัดแล้ว (Shipping No.)</th><th class="n">ออกแล้ว</th>').join('')}</tr></thead>
     <tbody>${list.map((h) => {
       const n = sum(h, (c) => c.n), cur = !h.before && now >= h.t && now < new Date(h.t.getTime() + 3600000);
       const empty = !n && !sum(h, (c) => c.p + c.r + c.sn.size + c.left.size);
       return `<tr class="${cur ? 'cur' : ''}${empty ? ' empty' : ''}${h.before ? ' before' : ''}"><td class="t">${dayLbl(h)}</td>
         <td class="t"><b>${hourLbl(h)}</b>${cur ? ' <span class="now-tag">ตอนนี้</span>' : ''}</td>
-        ${scope.map((w) => cell(h.wh[w])).join('')}${many ? `<td class="n"><b>${n}</b> คัน</td>` : ''}
+        ${scope.map((w) => cell(h.wh[w])).join('')}${many ? `<td class="n"><b>${n}</b> คัน</td>` : ''}${cumCell(h)}
         <td class="plan-bar"><span style="width:${(n / maxN) * 100}%"></span></td></tr>`;
     }).join('')}</tbody>
     <tfoot><tr><td colspan="2">รวม</td>${scope.map((w) => {
       const c = list.reduce((a, h) => { const x = h.wh[w]; a.n += x.n; a.est += x.est; a.p += x.p; a.r += x.r; a.open += x.open; a.hasSn += x.hasSn; a.sn += x.sn.size; a.left += x.left.size; return a; }, { n: 0, est: 0, p: 0, r: 0, open: 0, hasSn: 0, sn: 0, left: 0 });
       return `<td class="n">${c.n} คัน<div class="est-u">${f1(c.est)}</div></td><td class="n">${c.p} / ${c.r}${c.open ? `<div class="est-u">ค้าง ${c.open}</div>` : ''}</td><td class="n">${c.sn} คัน<div class="est-u">มี SN ${c.hasSn}/${c.p + c.r}</div></td><td class="n">${c.left}</td>`;
-    }).join('')}${many ? `<td class="n">${tot.n} คัน</td>` : ''}<td></td></tr></tfoot>`;
+    }).join('')}${many ? `<td class="n">${tot.n} คัน</td>` : ''}<td class="n">${tot.n} / ${tot.left}</td><td></td></tr></tfoot>`;
   renderPlanDock(list, scope, byGroup, hourLbl, dayLbl, now);
-  S.planExport = { list, scope, byGroup, hourLbl, dayLbl };
+  S.planExport = { list, scope, byGroup, hourLbl, dayLbl, cum };
   const sc = $('#planChart .plan-scroll'); if (sc && keepX) sc.scrollLeft = keepX;
   // second header row sticks right under the first one (measured, not guessed)
   const h1 = $('#tblPlan thead tr');
   if (h1 && h1.offsetHeight) $$('#tblPlan thead tr:nth-child(2) th').forEach((th) => { th.style.top = h1.offsetHeight + 'px'; });
+}
+
+// ---------- data check page: things in the current view that need a follow-up ----------
+// trucks whose shift ended without an ILMS departure, pallets left behind on a truck that left, ILMS trucks with no WMS
+// rows, rows scanned but not loaded for a long time, unreadable Shipping No., rows without a due.
+const scanMin = () => Math.max(5, Math.min(1440, Number(S.rules.scanMin) || 60));
+function dataChecks(all, scope, trips) {
+  const now = new Date(), rows = scope.flatMap((wh) => all[wh]);
+  const { start, end, full } = S.view, fullRows = WHS.flatMap((wh) => full[wh]);
+  const f = (d) => (d ? fmtShow(d) : '');
+  const truckCols = (x) => ({ WH: x.whOwn, 'Shipping No.': x.sn, Dock: [...x.docks].sort().join(', '), 'Window Name': [...x.wins].sort().join(', '),
+    'Pallet / Rack': `${x.p.size} / ${x.r.size}`, 'Due เริ่ม': f(x.dueStart) });
+  const rowCols = (r) => ({ WH: r.wh, 'Order No.': r.o, 'Part No.': r.p, Dock: r.d, 'Window Name': r.w, 'Pallet No.': r.pl, 'ประเภท': r.rk ? 'Rack' : 'Pallet',
+    'Due ที่ใช้': f(r.due), 'Shipping No.': r.sn || '' });
+  const out = [];
+  // 1. shift over, no ILMS time
+  const noIlms = trips.filter((x) => x.info && now >= x.info.end && x.src !== 'ILMS');
+  out.push({ id: 'noilms', icon: '🚚', title: 'จบกะแล้ว ยังไม่มีเวลาออกใน ILMS', unit: 'คัน',
+    desc: 'รถที่ยิงขึ้นแล้วใช้เวลา Shipping ล่าสุดของ WMS แทน (อาจไม่ตรงเวลาออกจริง) · รถที่ยังไม่ยิงขึ้นเลยถือว่ายังไม่ออก — ตรวจว่า ILMS อัปโหลดครบ / รถออกจริงหรือยัง',
+    items: noIlms.map((x) => ({ ...truckCols(x), 'สถานะ': x.done ? `ยิงขึ้นแล้ว (WMS ล่าสุด ${f(x.wmsLast)})` : 'ยังไม่ยิงขึ้นรถเลย', 'เหตุผล': reasonTxt(x.sn), _sn: x.sn })) });
+  // 2. truck left (ILMS) but some of its rows are not shipped
+  const left = new Map(trips.filter((x) => x.left && x.src === 'ILMS').map((x) => [x.sn, x]));
+  const behind = fullRows.filter((r) => r.sn && left.has(r.sn) && !r.done && scope.includes(r.wh));
+  const bUnits = new Set(behind.map((r) => r.pl || r.k));
+  out.push({ id: 'behind', icon: '📦', title: 'รถออกแล้ว แต่ยังมีงานบนรถคันนั้นที่ยังไม่ส่ง', unit: 'หน่วย', count: bUnits.size,
+    desc: 'ILMS บอกว่ารถออกแล้ว แต่ WMS ยังไม่ Confirm / ยังไม่มีทะเบียนรถของ Pallet เหล่านี้ — ตกค้างหรือยังไม่ได้ยิง',
+    items: behind.map((r) => ({ ...rowCols(r), 'รถออก (ILMS)': f(left.get(r.sn).dep), _sn: r.sn })) });
+  // 3. ILMS trucks of this range with no WMS rows
+  const snWms = new Set(fullRows.map((r) => r.sn).filter(Boolean));
+  const ilmsOnly = ((S.data && S.data.ilms && S.data.ilms.data) || []).filter((r) => {
+    const info = parseTrip(r.tp);
+    if (!info || !scope.includes(`WH${info.whDigit}`) || snWms.has(r.tp)) return false;
+    if (S.mode === 'sn') return snMatch(info);
+    return !!start && !!end && info.start < end && info.end > start && info.start <= now;
+  });
+  out.push({ id: 'ilmsonly', icon: '🔎', title: 'มีใน ILMS แต่ไม่พบใน WMS', unit: 'คัน',
+    desc: 'Truckplan No ของกะในช่วงนี้ที่ไม่มีแถวใน WMS — แผนรถที่ยกเลิก / ยังไม่ได้ผูก Shipping No. / ไฟล์ WMS ไม่ครบ',
+    items: ilmsOnly.map((r) => ({ WH: `WH${parseTrip(r.tp).whDigit}`, 'Truckplan No': r.tp, 'ทะเบียน': r.tr || '', Milestone: r.ms || '',
+      'เวลาออก (ILMS)': r.dt ? fmtShow(fromKey(r.dt)) : '', _sn: '' })) });
+  // 4. scanned but not loaded for a long time
+  const scan = rows.filter((r) => r.scanned && r.shipT && now - r.shipT >= scanMin() * 60000);
+  out.push({ id: 'scan', icon: '⏳', title: `ยิงแล้ว ยังไม่ขึ้นรถ นานเกิน ${scanMin()} นาที`, unit: 'หน่วย', count: new Set(scan.map((r) => r.pl || r.k)).size,
+    desc: 'มี Shipping Time แต่ยังไม่มีทะเบียนรถ (Truck License ช่อง Y) — ของรอหน้า Dock นานหรือยิงผิด',
+    items: scan.sort((a, b) => a.shipT - b.shipT).map((r) => ({ ...rowCols(r), 'ยิงเมื่อ': f(r.shipT), 'นาน': dur(Math.round((now - r.shipT) / 60000)), _sn: r.sn || '' })) });
+  // 5. Shipping No. that cannot be read
+  const bad = rows.filter((r) => r.sn && !parseTrip(r.sn));
+  out.push({ id: 'badsn', icon: '🔢', title: 'Shipping No. รูปแบบไม่ถูกต้อง', unit: 'แถว',
+    desc: 'ต้องเป็น ปีเดือนวัน + WH + D/N + Trip เช่น 202610144D003 — รถคันนี้จะไม่ถูกนับตามกะ',
+    items: bad.map((r) => ({ ...rowCols(r), _sn: r.sn })) });
+  // 6. rows without a due
+  const noDue = rows.filter((r) => !r.due);
+  out.push({ id: 'nodue', icon: '📅', title: 'ไม่มี Due (Due Date / Time ว่างหรืออ่านไม่ได้)', unit: 'แถว',
+    desc: 'แถวเหล่านี้คำนวณเลยกำหนด / รอส่งไม่ได้ และแสดงในทุกช่วงเวลา',
+    items: noDue.map((r) => ({ ...rowCols(r), _sn: r.sn || '' })) });
+  for (const c of out) if (c.count === undefined) c.count = c.items.length;
+  return out;
+}
+function renderCheck(all, scope, trips) {
+  const checks = dataChecks(all, scope, trips);
+  S.checkExport = checks;
+  const bad = checks.filter((c) => c.count);
+  const b = $('#cntCheck'); b.textContent = bad.length || ''; b.className = 'cnt amber';
+  if (S.page !== 'check') return;
+  const open = S.checkOpen || (S.checkOpen = new Set(['noilms', 'behind']));
+  $('#checkTiles').innerHTML = checks.map((c) => `<a href="#" class="chk-tile${c.count ? ' bad' : ''}" data-go="${c.id}">
+    <span class="ci">${c.icon}</span><span class="cv">${c.count.toLocaleString()} <small>${c.unit}</small></span><span class="cl">${esc(c.title)}</span></a>`).join('');
+  $('#checkBody').innerHTML = checks.map((c) => {
+    const cols = c.items.length ? Object.keys(c.items[0]).filter((k) => !k.startsWith('_')) : [];
+    const shown = c.items.slice(0, 200);
+    return `<details class="panel chk" id="chk-${c.id}" ${open.has(c.id) && c.count ? 'open' : ''} data-id="${c.id}">
+      <summary><span class="ci">${c.icon}</span> <b>${esc(c.title)}</b> <span class="pill ${c.count ? 'overdue' : 'done_on'}">${c.count ? `${c.count.toLocaleString()} ${c.unit}` : 'ไม่มี 👍'}</span></summary>
+      <p class="hint">${esc(c.desc)}</p>
+      ${c.items.length ? `<div class="table-wrap"><table class="tbl mini"><thead><tr>${cols.map((k) => `<th>${esc(k)}</th>`).join('')}</tr></thead>
+        <tbody>${shown.map((it) => `<tr${it._sn ? ` class="clickable" data-sn="${esc(it._sn)}"` : ''}>${cols.map((k) => `<td${/No\.|Pallet No|Truckplan/.test(k) ? ' class="t"' : ''}>${esc(it[k])}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+        ${c.items.length > shown.length ? `<p class="hint">แสดง ${shown.length} จาก ${c.items.length.toLocaleString()} แถว — กด Export Excel เพื่อดูทั้งหมด</p>` : ''}` : ''}
+    </details>`;
+  }).join('');
+  $$('#checkBody details').forEach((d) => d.addEventListener('toggle', () => { if (d.open) open.add(d.dataset.id); else open.delete(d.dataset.id); }));
+  $$('#checkBody tr.clickable').forEach((tr) => tr.addEventListener('click', () => openTruck(tr.dataset.sn)));
+  $$('#checkTiles [data-go]').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault(); open.add(a.dataset.go);
+    const d = $(`#chk-${a.dataset.go}`); if (d) { d.open = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  }));
+}
+function exportCheck() {
+  const x = S.checkExport;
+  if (!x || !x.some((c) => c.items.length)) { toast('ไม่มีรายการให้ Export', true); return; }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(x.map((c) => ({ 'รายการตรวจ': c.title, 'จำนวน': c.count, 'หน่วย': c.unit }))), 'สรุป');
+  for (const c of x) if (c.items.length) {
+    const data = c.items.map((it) => Object.fromEntries(Object.entries(it).filter(([k]) => !k.startsWith('_'))));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), c.title.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31));
+  }
+  XLSX.writeFile(wb, `DataCheck_${stamp()}.xlsx`);
+}
+
+// ---------- KPI trend page: finished shifts of the last N days from the truck history (+ ILMS departures) ----------
+// on time = ILMS departure <= Due start (the truck history keeps each truck's earliest due used: field ds). Backlog rows
+// due before the truck's shift would make almost every truck "late" by days, so Due start is taken no earlier than the
+// shift start (as the Plan page does in ship-date mode). Trucks without an ILMS time are left out of the on-time %.
+function kpiTrend(days, scope) {
+  const now = new Date(), from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days + 1);
+  const fromD = ymd(from).replace(/-/g, '');
+  const cells = new Map(); let noDs = 0, all = 0;
+  const reasons = new Map();
+  for (const wh of scope) for (const [sn, t] of Object.entries((S.hist && S.hist[wh]) || {})) {
+    if (!t.d || t.d < fromD) continue;
+    const info = parseTrip(sn);
+    if (!info || info.end > now) continue; // finished shifts only
+    const key = `${t.d}|${info.shift}`;
+    if (!cells.has(key)) cells.set(key, { d: info.date, s: info.shift, n: 0, p: 0, r: 0, dep: 0, on: 0, late: 0, lateMin: 0, rs: new Map(), wh: new Set() });
+    const c = cells.get(key);
+    c.n++; c.p += t.p || 0; c.r += t.r || 0; c.wh.add(wh); all++;
+    const il = S.ilmsMap.get(sn), ds0 = t.ds ? fromKey(t.ds) : null, ds = ds0 && (ds0 < info.start ? info.start : ds0);
+    if (!ds) noDs++;
+    if (il && il.dt && ds) {
+      c.dep++;
+      const lm = Math.round((il.dt - ds) / 60000);
+      if (lm > 0) {
+        c.late++; c.lateMin += lm;
+        const rc = (S.reasons[sn] && S.reasons[sn].c) || '-';
+        c.rs.set(rc, (c.rs.get(rc) || 0) + 1); reasons.set(rc, (reasons.get(rc) || 0) + 1);
+      } else c.on++;
+    }
+  }
+  const list = [...cells.values()].sort((a, b) => a.d - b.d || a.s.localeCompare(b.s));
+  return { list, noDs, all, reasons, from };
+}
+function renderKpi() {
+  if (S.page !== 'kpi') return;
+  const days = S.kpiDays || 30, scope = S.wh === 'ALL' ? WHS : [S.wh];
+  $$('#kpiDays .chip').forEach((c) => c.classList.toggle('on', +c.dataset.days === days));
+  $$('#kpiWh .tab').forEach((c) => c.classList.toggle('active', c.dataset.wh === S.wh));
+  const k = kpiTrend(days, scope);
+  S.kpiExport = k;
+  const T = k.list.reduce((a, c) => { a.n += c.n; a.p += c.p; a.r += c.r; a.dep += c.dep; a.on += c.on; a.late += c.late; a.lateMin += c.lateMin; return a; },
+    { n: 0, p: 0, r: 0, dep: 0, on: 0, late: 0, lateMin: 0 });
+  const pct = (a, b) => (b ? Math.round((a / b) * 1000) / 10 : null);
+  const dayN = new Set(k.list.map((c) => c.d.getTime())).size;
+  const topR = [...k.reasons].filter(([c]) => c !== '-').sort((a, b) => b[1] - a[1])[0];
+  const tile = (cls, lbl, v, u, det = '') => `<div class="kpi ${cls}"><div class="lbl">${lbl}</div><div class="val">${v} <small>${u}</small></div><div class="det">${det}</div></div>`;
+  $('#kpiTiles').innerHTML = [
+    tile('trip', `รถที่ใช้ ${days} วัน`, T.n.toLocaleString(), 'คัน', `เฉลี่ย ${dayN ? (T.n / dayN).toFixed(1) : 0} คัน/วัน · ${T.p.toLocaleString()} Pallet · ${T.r.toLocaleString()} Rack`),
+    tile('done', 'ออกตรงเวลา', pct(T.on, T.dep) ?? '-', '%', `${T.on.toLocaleString()} จาก ${T.dep.toLocaleString()} คันที่มีเวลา ILMS`),
+    tile('overdue', 'ออกช้า', T.late.toLocaleString(), 'คัน', T.late ? `ช้าเฉลี่ย ${dur(Math.round(T.lateMin / T.late))}` : ''),
+    tile('pending', 'สาเหตุช้าอันดับ 1', topR ? topR[1] : '-', topR ? 'คัน' : '', topR ? esc(REASON_TH[topR[0]] || topR[0]) : 'ยังไม่มีการระบุเหตุผล'),
+  ].join('');
+  const notes = [];
+  if (k.all && k.noDs / k.all > 0.2) notes.push(`รถ ${k.noDs.toLocaleString()} คันในสรุปรถยังไม่มี Due เริ่ม (สรุปจากก่อนอัปเดตนี้) จึงไม่นับ % ตรงเวลา — ผู้ดูแลกด "สร้างสรุปรถใหม่จากประวัติทั้งหมด" ที่หน้าข้อมูล 1 ครั้ง`);
+  if (T.n > T.dep) notes.push(`${(T.n - T.dep).toLocaleString()} คันไม่มีเวลาออกใน ILMS (หรือไม่มี Due เริ่ม) — ไม่นับใน % ตรงเวลา`);
+  $('#kpiNote').innerHTML = notes.map(esc).join('<br>');
+  // chart by day: stacked bars = trucks D / N, line = on-time %
+  const byDay = new Map();
+  for (let d = new Date(k.from); d <= new Date(); d.setDate(d.getDate() + 1)) byDay.set(ymd(d), { d: new Date(d), D: 0, N: 0, on: 0, dep: 0 });
+  for (const c of k.list) { const x = byDay.get(ymd(c.d)); if (!x) continue; x[c.s] += c.n; x.on += c.on; x.dep += c.dep; }
+  const L = [...byDay.values()];
+  const W = Math.max(($('#kpiChart').clientWidth || 900) - 2, L.length * 22), H = 240, P = { l: 34, r: 38, t: 18, b: 34 };
+  const vmax = Math.max(1, ...L.map((x) => x.D + x.N));
+  const step = (W - P.l - P.r) / Math.max(1, L.length), bw = Math.min(26, step * 0.66);
+  const y = (v) => P.t + (H - P.t - P.b) * (1 - v / vmax), yp = (p) => P.t + (H - P.t - P.b) * (1 - p / 100);
+  const cx = (i) => P.l + step * i + step / 2;
+  const pts = L.map((x, i) => (x.dep ? [cx(i), yp((x.on / x.dep) * 100), Math.round((x.on / x.dep) * 100)] : null));
+  const path = pts.filter(Boolean).map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('');
+  const every = Math.ceil(L.length / 16);
+  $('#kpiChart').innerHTML = L.length ? `<div class="plan-legend"><span><i class="lg-bar"></i>รถกะเช้า (D)</span><span><i class="lg-bar n"></i>รถกะดึก (N)</span><span><i class="lg-line"></i>% ออกตรงเวลา (แกนขวา)</span></div>
+    <div class="plan-scroll"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="แนวโน้มรถและ % ตรงเวลา">
+    ${[0, Math.ceil(vmax / 2), vmax].map((v) => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${P.l - 6}" y="${y(v) + 4}" class="ax" text-anchor="end">${v}</text>`).join('')}
+    ${[0, 50, 100].map((p) => `<text x="${W - P.r + 6}" y="${yp(p) + 4}" class="ax">${p}%</text>`).join('')}
+    ${L.map((x, i) => `<g><rect x="${cx(i) - bw / 2}" y="${y(x.D)}" width="${bw}" height="${Math.max(0, H - P.b - y(x.D))}" class="bar"><title>${dmy(x.d)} กะเช้า ${x.D} คัน</title></rect>
+      <rect x="${cx(i) - bw / 2}" y="${y(x.D + x.N)}" width="${bw}" height="${Math.max(0, y(x.D) - y(x.D + x.N))}" class="bar n"><title>${dmy(x.d)} กะดึก ${x.N} คัน</title></rect>
+      ${i % every === 0 ? `<text x="${cx(i)}" y="${H - P.b + 15}" class="ax" text-anchor="middle">${fmtShow(x.d).slice(0, 5)}</text>` : ''}</g>`).join('')}
+    <path d="${path}" class="ln"/>
+    ${pts.map((p, i) => (p ? `<circle cx="${p[0]}" cy="${p[1]}" r="3" class="lnp"><title>${dmy(L[i].d)} ตรงเวลา ${p[2]}% (${L[i].on}/${L[i].dep})</title></circle>` : '')).join('')}
+    </svg></div>` : '<p class="hint">ยังไม่มีประวัติรถ</p>';
+  const rsCell = (m) => [...m].sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c === '-' ? 'ยังไม่ระบุ' : esc(REASON_TH[c] || c)} ${n}`).join(' · ');
+  const rows = [...k.list].reverse();
+  $('#tblKpi').innerHTML = rows.length ? `<thead><tr><th>วันที่</th><th>กะ</th><th class="n">รถ</th><th class="n">Pallet / Rack</th><th class="n">มีเวลา ILMS</th>
+      <th class="n">ตรงเวลา</th><th class="n">ช้า</th><th class="n">% ตรงเวลา</th><th class="n">ช้าเฉลี่ย</th><th>เหตุผลที่ช้า</th></tr></thead>
+    <tbody>${rows.map((c) => { const p = pct(c.on, c.dep); return `<tr><td class="t">${dmy(c.d)}</td><td>${SHIFT_TH[c.s]}</td><td class="n"><b>${c.n}</b></td>
+      <td class="n">${c.p} / ${c.r}</td><td class="n">${c.dep}</td><td class="n c-dn">${n0(c.on)}</td><td class="n c-od">${n0(c.late)}</td>
+      <td class="n"><b class="${p === null ? '' : p >= 95 ? 'c-dn' : p >= 85 ? 'c-soon' : 'c-od'}">${p === null ? '-' : p + '%'}</b></td>
+      <td class="n">${c.late ? dur(Math.round(c.lateMin / c.late)) : '<span class="z">-</span>'}</td><td class="rsn-s">${rsCell(c.rs)}</td></tr>`; }).join('')}</tbody>` : '';
+  const rs = [...k.reasons].sort((a, b) => b[1] - a[1]);
+  $('#kpiReasons').innerHTML = rs.length ? `<table class="tbl mini"><thead><tr><th>สาเหตุ</th><th class="n">รถช้า (คัน)</th><th class="n">%</th><th></th></tr></thead><tbody>
+    ${rs.map(([c, n]) => `<tr><td>${c === '-' ? '<span class="z">ยังไม่ระบุเหตุผล</span>' : esc(REASON_TH[c] || c)}</td><td class="n">${n}</td><td class="n">${pct(n, T.late)}%</td>
+      <td class="plan-bar"><span style="width:${(n / rs[0][1]) * 100}%"></span></td></tr>`).join('')}</tbody></table>` : '<p class="hint">ไม่มีรถออกช้าในช่วงนี้ 👍</p>';
+}
+function exportKpi() {
+  const k = S.kpiExport;
+  if (!k || !k.list.length) { toast('ไม่มีข้อมูลให้ Export', true); return; }
+  const rows = k.list.map((c) => ({ 'วันที่': dmy(c.d), 'กะ': c.s, WH: [...c.wh].join(', '), 'รถ (คัน)': c.n, Pallet: c.p, Rack: c.r, 'มีเวลา ILMS': c.dep,
+    'ตรงเวลา': c.on, 'ช้า': c.late, '% ตรงเวลา': c.dep ? +((c.on / c.dep) * 100).toFixed(1) : '', 'ช้าเฉลี่ย (นาที)': c.late ? Math.round(c.lateMin / c.late) : '',
+    ...Object.fromEntries([...c.rs].map(([r, n]) => [`ช้า: ${r === '-' ? 'ยังไม่ระบุ' : REASON_TH[r] || r}`, n])) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'รายกะ');
+  XLSX.writeFile(wb, `KPI_${stamp()}.xlsx`);
 }
 
 // ---------- Est accuracy history (back-test on the truck history, learning only from days before each shift) ----------
@@ -982,6 +1236,8 @@ function exportPlan() {
       Object.assign(o, { [`${w} Plan (คัน)`]: c.n, [`${w} Est (ทศนิยม)`]: +c.est.toFixed(2), [`${w} Pallet`]: c.p, [`${w} Rack`]: c.r,
         [`${w} ค้าง`]: c.open, [`${w} มี Shipping No.`]: c.hasSn, [`${w} จัดแล้ว (คัน)`]: c.sn.size, [`${w} ออกแล้ว (คัน)`]: c.left.size }); }
     if (x.scope.length > 1) o['รวม Plan (คัน)'] = tot;
+    const c = x.cum.get(h.key);
+    Object.assign(o, { 'สะสม Plan (คัน)': c.n, 'สะสม ออกแล้ว (คัน)': c.left, 'ต่าง (ออก − Plan)': c.left - c.n });
     return o;
   });
   const dock = [];
@@ -1158,7 +1414,8 @@ function cmpLine(est, act, trucks) {
 }
 
 // ---------- pages ----------
-const PAGES = ['overview', 'window', 'trucks', 'est', 'plan', 'detail', 'data'];
+S.kpiDays = [7, 30, 90].includes(Number(lsGet('sc_kpi_days'))) ? Number(lsGet('sc_kpi_days')) : 30;
+const PAGES = ['overview', 'window', 'trucks', 'est', 'plan', 'check', 'kpi', 'detail', 'data'];
 function go(page) {
   if (location.hash !== '#' + page) location.hash = page; else showPage();
 }
@@ -1167,7 +1424,7 @@ function showPage() {
   S.page = PAGES.includes(p) ? p : 'overview';
   $$('.page').forEach((el) => { el.hidden = el.dataset.page !== S.page; });
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.page === S.page));
-  $('#filterBar').hidden = S.page === 'data';
+  $('#filterBar').hidden = S.page === 'data' || S.page === 'kpi'; // KPI has its own day range
   document.body.classList.add('pagein');
   clearTimeout(showPage.t); showPage.t = setTimeout(() => document.body.classList.remove('pagein'), 1200);
   render();
@@ -1461,6 +1718,7 @@ function openRules() {
   $('#keepDays').value = draft.keepDays || 7;
   $('#staleWms').value = draft.staleWmsMin || 30; $('#staleIlms').value = draft.staleIlmsMin || 30;
   $('#soonMin').value = draft.soonMin || 30;
+  $('#escMin').value = draft.escMin || 30; $('#scanMin').value = draft.scanMin || 60;
   drawRules();
   $('#rulesErr').textContent = '';
   $('#dlgRules').showModal();
@@ -1609,6 +1867,12 @@ function bind() {
   });
   $('#btnAddGroup').addEventListener('click', () => { readRules(); draft.groups.push({ docks: [], map: [{ orig: '', slide: '' }] }); drawRules(); });
   $('#btnAddShift').addEventListener('click', () => { readRules(); draft.groups.push({ type: 'shift', docks: [], shift: -30 }); drawRules(); });
+  $('#btnCheckXlsx').addEventListener('click', exportCheck);
+  $('#btnKpiXlsx').addEventListener('click', exportKpi);
+  $$('#kpiDays .chip').forEach((c) => c.addEventListener('click', () => { S.kpiDays = +c.dataset.days; lsSet('sc_kpi_days', c.dataset.days); render(); }));
+  $$('#kpiWh .tab').forEach((c) => c.addEventListener('click', () => { $(`#whTabs .tab[data-wh="${c.dataset.wh}"]`).click(); }));
+  $('#btnRsnSave').addEventListener('click', () => saveReasonDlg(false));
+  $('#btnRsnDel').addEventListener('click', () => saveReasonDlg(true));
   $('#btnSaveRules').addEventListener('click', async () => {
     readRules();
     const bad = draft.groups.some((g) => !g.docks.length || (g.type === 'shift' ? !Number.isInteger(g.shift) || !g.shift
@@ -1621,6 +1885,8 @@ function bind() {
     draft.staleIlmsMin = Math.max(5, Math.min(4320, Number($('#staleIlms').value) || 30));
     delete draft.staleWms; delete draft.staleIlms;
     draft.soonMin = Math.max(5, Math.min(240, Number($('#soonMin').value) || 30));
+    draft.escMin = Math.max(5, Math.min(600, Number($('#escMin').value) || 30));
+    draft.scanMin = Math.max(5, Math.min(1440, Number($('#scanMin').value) || 60));
     try { await lockConfirmedDues(); await store.saveRules(draft); $('#dlgRules').close(); toast('บันทึกกฎแล้ว'); await reload(); }
     catch (err) { $('#rulesErr').textContent = 'บันทึกไม่สำเร็จ: ' + err.message; }
   });
@@ -1720,21 +1986,24 @@ function beep() {
 function notifyCheck(trips) {
   if (!notifOn() || !viewingNow() || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
   const cur = new Map();
-  for (const x of trips) if (x.od) cur.set(x.sn + '|od', x); else if (x.soon) cur.set(x.sn + '|soon', x);
+  for (const x of trips) if (isEsc(x)) cur.set(x.sn + '|esc', x); else if (x.od) cur.set(x.sn + '|od', x); else if (x.soon) cur.set(x.sn + '|soon', x);
   const scope = `${S.wh}|${S.mode}|${S.search}`;
   if (!notif.seen || notif.scope !== scope) { notif.seen = new Set(cur.keys()); notif.scope = scope; return; }
-  const fresh = [...cur].filter(([k]) => !notif.seen.has(k)).map(([k, x]) => [k.endsWith('|od'), x]);
+  const fresh = [...cur].filter(([k]) => !notif.seen.has(k)).map(([k, x]) => [k.split('|').pop(), x]);
   notif.seen = new Set(cur.keys());
   if (!fresh.length) return;
-  const od = fresh.filter(([o]) => o).map(([, x]) => x), so = fresh.filter(([o]) => !o).map(([, x]) => x);
+  const of = (t) => fresh.filter(([k]) => k === t).map(([, x]) => x);
+  const es = of('esc'), od = of('od'), so = of('soon');
   const list = (a, f) => a.slice(0, 5).map(f).join(', ') + (a.length > 5 ? ' …' : '');
-  const body = [od.length ? `เลย Due ยังไม่ออก ${od.length} คัน: ${list(od, (x) => x.sn)}` : '',
+  const body = [es.length ? `เลย Due เกิน ${escMin()} นาที ${es.length} คัน: ${list(es, (x) => `${x.sn} (${dur(x.odMin)})`)}` : '',
+    od.length ? `เลย Due ยังไม่ออก ${od.length} คัน: ${list(od, (x) => x.sn)}` : '',
     so.length ? `อีก ≤ ${SOON_MIN} นาทีถึง Due ${so.length} คัน: ${list(so, (x) => `${x.sn} (${x.soonMin} น.)`)}` : ''].filter(Boolean).join('\n');
+  const title = es.length ? `🚨 รถเลย Due เกิน ${escMin()} นาที` : od.length ? '⚠ รถเลย Due ยังไม่ออก' : '⏰ รถใกล้ถึง Due';
   try {
-    const n = new Notification(od.length ? '⚠ รถเลย Due ยังไม่ออก' : '⏰ รถใกล้ถึง Due', { body, tag: 'sc-trucks', renotify: true, requireInteraction: od.length > 0 });
+    const n = new Notification(title, { body, tag: 'sc-trucks', renotify: true, requireInteraction: es.length + od.length > 0 });
     n.onclick = () => { window.focus(); go('trucks'); n.close(); };
   } catch { /* ignore */ }
-  beep();
+  beep(); if (es.length) setTimeout(beep, 900); // escalation: longer sound
 }
 
 // ---------- shift report (per PC): an Excel summary saved to a chosen folder after each shift ----------
@@ -1775,7 +2044,7 @@ function shiftReportBook(sh) {
     'Window Name': [...x.wins].sort().join(', '), 'ทะเบียน': [...x.trucks].join(', '), Pallet: x.p.size, Rack: x.r.size, 'กล่อง': x.box,
     'Due เริ่ม': f(x.dueStart), 'Due สุดท้าย': f(x.dueEnd), 'ออกจริง': f(x.dep), 'แหล่งเวลาออก': x.src,
     'สถานะ': x.left ? (x.late ? 'ออกช้า' : 'ตรงเวลา') : x.loading ? 'ขึ้นรถแล้ว · รอ ILMS' : x.od ? 'เลย Due ยังไม่ออก' : 'ยังไม่ออก',
-    'ช้า (นาที)': x.late ? x.lateMin : '' }));
+    'ช้า (นาที)': x.late ? x.lateMin : x.od ? x.odMin : '', 'เหตุผล': reasonTxt(x.sn) }));
   const openRows = due.filter((r) => !r.done).map((r) => ({ WH: r.wh, 'Order No.': r.o, Supplier: r.s, 'Part No.': r.p, Dock: r.d,
     'Window Name': r.w, 'Pallet No.': r.pl, 'ประเภท': r.rk ? 'Rack' : 'Pallet', 'Due ที่ใช้': f(r.due),
     'สถานะ': r.st === ST.OVERDUE ? 'เลยกำหนด' : r.sh ? 'ยิงแล้ว ยังไม่ขึ้นรถ' : 'รอส่ง', 'Shipping No.': r.sn || '', 'กล่อง': r.bx }));
@@ -1858,6 +2127,8 @@ async function main() {
   tick(); setInterval(tick, 1000);
   setInterval(minuteTick, 60000); // statuses move as time passes, the view follows the shift change, shift report
   drawNotif(); repInit();
+  // installable app (PWA): only on the real site (https), not on a local test server
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
   await store.init();
   store.onAuth((u) => {
     S.user = u;

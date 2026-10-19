@@ -20,17 +20,24 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
   `slide_meta` + `slide_c0..n`, `WH1_meta` + `WH1_c*`, `WH4_meta` + `WH4_c*`, `ilms_meta` + `ilms_c*`, `rules`,
   archive `arch_<WH>_<YYYYMMDD>_meta` + `_c*` (shipped rows by ship day, never deleted) + `arch_index`.
   `truckhist_meta` + `_c*` = compact truck summaries for Est
-  `{WH1: {sn: {v:2, s, d, p, r, n: {'Dock|Window': [pallets, racks]}}}, WH4: {...}, links: {WH1: {parts: {part: node}, sups: {...}}}}`
+  `{WH1: {sn: {v:2, s, d, p, r, ds, n: {'Dock|Window': [pallets, racks]}}}, WH4: {...}, links: {WH1: {parts: {part: node}, sups: {...}}}}`
+  (`ds` = earliest due used of the truck, 19/10/2026, for the KPI trend; summaries saved before that have none until the rebuild button)
   (~0.5 MB for 2.5 months), updated on every WMS upload (max per Dock|Window), kept 365 days, NOT removed by the quarterly
   delete. Data page button "สร้างสรุปรถใหม่จากประวัติทั้งหมด" rebuilds it from every archive day (one day at a time),
   merged over the saved history so trucks of deleted quarters are kept.
   Viewers load the archive only for the days being viewed (±1 day).
+  `reasons` = one doc `{ 'Shipping No.': { c: code, t: note, by: email, at: ISO } }` (late / overdue truck reasons, patched per
+  truck with `mergeDoc`, watched like the meta docs).
   Payloads are JSON split into ≤900 KB (UTF-8 bytes) chunk docs named `<prefix>_<cid>_c<i>` (old saves: `<prefix>_c<i>`);
   new chunks are written first (in batches ≤ 8 MB / 400 ops), then the meta doc (`cid`, `version`), then old chunks are
   deleted — a failed save keeps the old data; readers retry if a chunk's `v` ≠ meta.version. `arch_index` is updated
   field by field (`mergeDoc`, setDoc merge) so concurrent devices don't overwrite each other. Viewers watch only the meta docs.
 - `js/app.js` — UI (Thai labels), uploads, filters, rules dialog, Excel export.
-  Pages via URL hash: `#overview`, `#window`, `#trucks`, `#est`, `#plan`, `#detail`, `#data` (uploads + rules). Filter bar is shared.
+  Pages via URL hash: `#overview`, `#window`, `#trucks`, `#est`, `#plan`, `#check`, `#kpi`, `#detail`, `#data` (uploads + rules).
+  Filter bar is shared (hidden on `#data` and `#kpi`).
+- `sw.js` + `manifest.webmanifest` + `icons/` — installable app (PWA). Network first (a deploy shows at once), cache only
+  when offline; registered only on https.
+- `tests/logic.test.mjs` — business-rule tests (`node --test 'tests/*.test.mjs'`), also run by GitHub Actions on every push.
 
 ## Business rules (agreed with the user — do not change without asking)
 1. **Due used**
@@ -52,6 +59,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 3. **Scanned, not loaded (ยิงแล้ว ยังไม่ขึ้นรถ)** = Shipping Time present but no valid truck → counts as NOT shipped.
 4. Not shipped: due < now → Overdue (เลยกำหนด), else Pending (รอส่ง). Pending with due ≤ `rules.soonMin` (default 30, set in the rules dialog; `SOON_MIN`/`setSoonMin`) min away → "ใกล้ถึง Due"
    warning (amber pill, overview strip, KPI/tile counts, truck chip); a truck is "soon" when not left and Due start is ≤ 30 min away.
+   Escalation (19/10/2026): a truck not left `rules.escMin` (default 30, rules dialog) minutes after its Due start (`x.odMin`)
+   gets a red blinking pill / row, its own count in the tile, and a separate browser alert ("เลย Due เกิน N นาที", double beep).
 5. **Pallet / Rack** = distinct `Pallet No.`; RFID No. all zeros → Rack, otherwise Pallet. Boxes = sum of `Recept Box Count`.
 6. **Uploads**: DataSlide upload replaces all old slide data. WMS is ONE file for both warehouses, split by
    Window Name (`1…` → WH1, `4…` → WH4, other rows skipped with a warning); a warehouse with no rows in the file
@@ -121,7 +130,17 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Due start is in the hour (Shipping No., value labels on the chart line; table also shows pallets+racks that already have a Shipping No.) and trucks that left in the hour (ILMS/WMS departure, even outside the range).
    Backlog rows due before the start go to one "ค้างก่อนช่วง" row.
 
-13. **Other features**: data cards show file time (`meta.fileAt` = file.lastModified) + upload time ·
+13. **Truck reasons** (19/10/2026): late or overdue trucks get a "เหตุผล" column on the truck page; signed-in editors pick a
+   reason (REASONS list in app.js: รถมาช้า, ของไม่พร้อม, โหลดช้า, Dock ไม่ว่าง, รอเอกสาร, คุณภาพ, ระบบ, ลูกค้าขอเลื่อน, อื่น ๆ)
+   + optional note; shown on the overview list, the shift report and the KPI page.
+   **Data check page (`#check`)**, for the current filter: trucks whose shift ended without an ILMS time · rows still open on a
+   truck that left (ILMS) · ILMS trucks with no WMS rows · scanned-not-loaded rows older than `rules.scanMin` (default 60) ·
+   unreadable Shipping No. · rows without a due. Nav badge = number of checks with findings; Excel export.
+   **KPI trend page (`#kpi`)**: finished shifts of the last 7 / 30 / 90 days from `truckhist` (+ ILMS departures): trucks per
+   day (D/N bars), on-time % line, table per shift, late reasons. On time = ILMS departure ≤ Due start, where Due start is
+   the truck's `ds` but no earlier than its shift start (old backlog rows would make nearly every truck "late" by days);
+   trucks without ILMS / ds are left out of the %. Plan page also shows running totals Plan vs left ("สะสม Plan / ออกจริง").
+14. **Other features**: data cards show file time (`meta.fileAt` = file.lastModified) + upload time ·
    browser alerts per device (🔔 button, localStorage `sc_notify`): Notification + beep when a truck newly becomes "soon" or
    overdue, only while viewing now; what is on screen at open / WH or mode change is not alerted (`notifyCheck`) ·
    shift report (data page, per PC, no login): Excel `ShiftReport_<YYYYMMDD><D|N>.xlsx` (sheets สรุปกะ / รถ / ค้างส่ง) written to
@@ -136,7 +155,7 @@ stale-data banner (WMS / ILMS upload older than `rules.staleWmsMin` / `rules.sta
    Browser cache: `loadChunked` keeps payloads in IndexedDB (`shipcheck-cache`) and reuses them while meta.version is
    unchanged, so a visit reads only the meta docs unless data changed.
 
-14. **Auto update from folders** (data page, admin): File System Access API (Edge/Chrome desktop). The user picks the WMS
+15. **Auto update from folders** (data page, admin): File System Access API (Edge/Chrome desktop). The user picks the WMS
    and ILMS export folders once (handles kept in IndexedDB `shipcheck-local`); while the page stays open and signed in
    on that PC it checks every N min (set on the panel, 5–240, default 15, localStorage `sc_auto_min`, per PC), takes the newest .csv/.xlsx per folder and runs the same `uploadFile(kind, file, true)`
    as the buttons when name|lastModified|size changed (files modified < 1 min ago are retried a minute later; other-WH
@@ -147,6 +166,7 @@ stale-data banner (WMS / ILMS upload older than `rules.staleWmsMin` / `rules.sta
 On time #10B981 · late < 15 min #F59E0B · late ≥ 15 min #EF4444 · plan / pending #2563EB · bars #BFDBFE · line #7C3AED
 
 ## Testing
+Run `node --test 'tests/*.test.mjs'` before every deploy (also runs in GitHub Actions); add a test when a rule changes.
 Serve locally (`python3 -m http.server`) with empty apiKey (demo mode), upload real files:
 DataSlide xlsx (sheet `DataSlide`, columns ORDER, Supplier, Dock, New Due Date, New Due Time) and WMS exports
 (columns include Order No., Supplier, Part No., Dock, Window Name, Pallet No., Due Date, Due Time, StockIn Time,

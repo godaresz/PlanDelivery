@@ -23,7 +23,7 @@ export async function init() {
   db = fs.getFirestore(app);
   auth = fa.getAuth(app);
   // live updates: only the small meta documents are watched
-  for (const id of ['slide_meta', 'WH1_meta', 'WH4_meta', 'ilms_meta', 'arch_index', 'rules']) {
+  for (const id of ['slide_meta', 'WH1_meta', 'WH4_meta', 'ilms_meta', 'arch_index', 'rules', 'reasons']) {
     fs.onSnapshot(fs.doc(db, COLLECTION, id), () => emit(), () => {});
   }
 }
@@ -178,9 +178,10 @@ export async function loadAll() {
   const [slide, wh1, wh4, ilms, rules] = await Promise.all([
     loadChunked('slide'), loadChunked('WH1'), loadChunked('WH4'), loadChunked('ilms'), getDoc('rules'),
   ]);
+  const reasons = (await getDoc('reasons')) || {};
   const truckhist = await loadChunked('truckhist');
   const archIndex = await loadArchIndex();
-  return { slide, WH1: wh1, WH4: wh4, ilms, rules, archIndex, truckhist };
+  return { slide, WH1: wh1, WH4: wh4, ilms, rules, archIndex, truckhist, reasons };
 }
 export const saveSlide = (payload, meta) => saveChunked('slide', payload, meta);
 export const saveWms = (wh, rows, meta) => saveChunked(wh, rows, meta);
@@ -226,3 +227,5 @@ export async function deleteArchiveDays(list, index) {
   }
 }
 export const saveRules = (rules) => writeDocs([['rules', { ...rules, updatedAt: new Date().toISOString() }]], []);
+// late / overdue reasons per truck: one small doc { 'Shipping No.': { c: code, t: note, by, at } }, patched per truck
+export const saveReason = (sn, v) => mergeDoc('reasons', { [sn]: v });

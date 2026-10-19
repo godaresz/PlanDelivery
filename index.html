@@ -6,6 +6,12 @@
   <title>Shipping Check WH1 / WH4</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#1F2937">
+  <link rel="icon" type="image/png" href="icons/favicon.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
@@ -33,6 +39,8 @@
     <a href="#trucks" data-page="trucks"><span class="ic">⛟</span>สรุปรถ<b class="cnt" id="cntTruck"></b></a>
     <a href="#est" data-page="est"><span class="ic">∑</span>ประมาณการรถ<b class="cnt" id="cntEst"></b></a>
     <a href="#plan" data-page="plan"><span class="ic">◷</span>Plan รถรายชั่วโมง<b class="cnt" id="cntPlan"></b></a>
+    <a href="#check" data-page="check"><span class="ic">✓</span>ตรวจข้อมูล<b class="cnt" id="cntCheck"></b></a>
+    <a href="#kpi" data-page="kpi"><span class="ic">↗</span>แนวโน้ม KPI</a>
     <a href="#detail" data-page="detail"><span class="ic">≡</span>รายละเอียด<b class="cnt" id="cntDetail"></b></a>
     <a href="#data" data-page="data"><span class="ic">⇪</span>ข้อมูล &amp; กฎ</a>
   </nav>
@@ -185,6 +193,49 @@
       </section>
     </div>
 
+    <!-- page: data check -->
+    <div class="page" data-page="check">
+      <section class="panel">
+        <div class="panel-h">
+          <h2>ตรวจข้อมูล</h2>
+          <button class="btn sm" id="btnCheckXlsx">⇩ Export Excel</button>
+          <span class="hint">สิ่งที่ควรตามต่อในช่วงเวลาที่เลือก — คลิกแถวที่มี Shipping No. เพื่อดูรายละเอียด</span>
+        </div>
+        <div id="checkTiles" class="chk-tiles"></div>
+      </section>
+      <div id="checkBody"></div>
+    </div>
+
+    <!-- page: KPI trend -->
+    <div class="page" data-page="kpi">
+      <section class="panel">
+        <div class="panel-h">
+          <h2>แนวโน้ม KPI</h2>
+          <div class="tabs" id="kpiWh">
+            <button class="tab" data-wh="ALL">ทั้งหมด</button><button class="tab" data-wh="WH1">WH1</button><button class="tab" data-wh="WH4">WH4</button>
+          </div>
+          <div class="quick" id="kpiDays">
+            <button class="chip" data-days="7">7 วัน</button><button class="chip" data-days="30">30 วัน</button><button class="chip" data-days="90">90 วัน</button>
+          </div>
+          <button class="btn sm" id="btnKpiXlsx">⇩ Export Excel</button>
+          <span class="hint">กะที่จบแล้ว จากสรุปรถที่ Confirm แล้ว · ตรงเวลา = เวลาออก ILMS ไม่เกิน Due เริ่มของรถ (งานค้างที่ Due ก่อนเริ่มกะ นับ Due เริ่ม = เวลาเริ่มกะ)</span>
+        </div>
+        <div id="kpiTiles" class="kpi-row trip-tiles"></div>
+        <p class="note" id="kpiNote"></p>
+        <div id="kpiChart" class="plan-chart"></div>
+      </section>
+      <div class="kpi-grid">
+        <section class="panel">
+          <div class="panel-h"><h2>รายกะ</h2></div>
+          <div class="table-wrap"><table class="tbl" id="tblKpi"></table></div>
+        </section>
+        <section class="panel">
+          <div class="panel-h"><h2>สาเหตุรถออกช้า</h2><span class="hint">จากเหตุผลที่บันทึกในหน้าสรุปรถ</span></div>
+          <div id="kpiReasons"></div>
+        </section>
+      </div>
+    </div>
+
     <!-- page: detail -->
     <div class="page" data-page="detail">
       <section class="panel">
@@ -280,11 +331,28 @@
         <label class="inline">เตือนเมื่อไม่ได้อัปโหลด WMS เกิน <input type="number" id="staleWms" min="5" max="4320" step="5" value="30"> นาที</label>
         <label class="inline">ILMS เกิน <input type="number" id="staleIlms" min="5" max="4320" step="5" value="30"> นาที</label>
         <label class="inline">เตือนก่อนถึง Due <input type="number" id="soonMin" min="5" max="240" step="5" value="30"> นาที</label>
+        <label class="inline">เตือนขั้นรุนแรงเมื่อรถเลย Due เกิน <input type="number" id="escMin" min="5" max="600" step="5" value="30"> นาที</label>
+        <label class="inline">หน้าตรวจข้อมูล: ยิงแล้วยังไม่ขึ้นรถเกิน <input type="number" id="scanMin" min="5" max="1440" step="5" value="60"> นาที</label>
       </div>
       <div class="err" id="rulesErr"></div>
       <div class="dlg-actions">
         <button type="button" class="btn ghost" data-close>ปิด</button>
         <button type="button" class="btn primary admin-only" id="btnSaveRules">บันทึกกฎ</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- late / overdue reason dialog -->
+  <dialog id="dlgReason" class="dlg">
+    <div>
+      <h3>เหตุผลรถออกช้า / เลย Due — <span id="rsnSn"></span></h3>
+      <label>สาเหตุ<select id="rsnCode"></select></label>
+      <label>รายละเอียด (ถ้ามี)<textarea id="rsnNote" rows="3" maxlength="200" placeholder="เช่น รถเข้า Dock 10:15 / รอของจาก Supplier"></textarea></label>
+      <p class="hint" id="rsnInfo"></p>
+      <div class="dlg-actions">
+        <button type="button" class="btn ghost" id="btnRsnDel">ลบเหตุผล</button>
+        <button type="button" class="btn ghost" data-close>ยกเลิก</button>
+        <button type="button" class="btn primary" id="btnRsnSave">บันทึก</button>
       </div>
     </div>
   </dialog>
