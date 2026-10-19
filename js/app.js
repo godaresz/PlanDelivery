@@ -73,11 +73,24 @@ function setRange(kind, silent = false) {
 // every data update (page open, upload, auto update, another device's upload) moves the view to the current day:
 // due mode keeps the chosen button (day / night / whole day) for today, a hand-typed range becomes the current shift;
 // ship-date mode moves to today's working day (before 07:30 = yesterday's date, still in its night shift)
+// is the user looking at "now"? (a shift button is on, a typed range that contains now, or today's ship date)
+function workDay() { const n = new Date(); if (n.getHours() * 60 + n.getMinutes() < 450) n.setDate(n.getDate() - 1); return ymd(n); }
+function viewingNow() {
+  if (S.mode === 'sn') return S.snDate === workDay() || S.snDate === ymd(new Date());
+  if ($('.quick .chip[data-q].on')) return true; // shift buttons always set today's range (re-applied for the new day)
+  const s = fromInput($('#fStart').value), e = fromInput($('#fEnd').value), now = new Date();
+  return !!s && !!e && s <= now && now < new Date(e.getTime() + 60000);
+}
+function drawNowTag() {
+  const past = !viewingNow();
+  $('#pastTag').hidden = !past;
+  $('#btnNow').classList.toggle('primary', past);
+}
 function rollToToday() {
   if (S.mode === 'sn') {
     const n = new Date();
     if (n.getHours() * 60 + n.getMinutes() < 450) n.setDate(n.getDate() - 1);
-    S.snDate = ymd(n); drawMode(); saveFilters();
+    S.snDate = workDay(); drawMode(); saveFilters();
     return;
   }
   const chip = $('.quick .chip[data-q].on');
@@ -319,7 +332,9 @@ async function reload() {
     setSoonMin(S.rules.soonMin);
     S.hist = S.data.truckhist.data || { WH1: {}, WH4: {} };
     S.ilmsMap = new Map((S.data.ilms.data || []).map((r) => [r.tp, { ...r, dt: fromKey(r.dt) }]));
-    rollToToday();
+    // page open: always today; later updates follow "now" only while the user is looking at now (a past day stays put)
+    if (!S.loadedOnce || viewingNow()) rollToToday();
+    S.loadedOnce = true;
     renderSources();
     render();
     renderArchive();
@@ -449,7 +464,7 @@ function checkRange() {
   $$('#fgDue .dt-wrap').forEach((w) => w.classList.toggle('bad', bad));
 }
 function render(quiet = false) {
-  syncDates(); checkRange();
+  syncDates(); checkRange(); drawNowTag();
   if (!S.data) return;
   const animate = !quiet && !calm.matches;
   if (animate) {
@@ -1518,6 +1533,7 @@ function bind() {
   $('#tvPause').addEventListener('click', () => { tv.paused = !tv.paused; tvDraw(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && tv.on) tvStop(); });
   renderAcc();
+  $('#btnNow').addEventListener('click', () => { rollToToday(); render(); });
   $('#fSnDate').addEventListener('change', (e) => { S.snDate = e.target.value; saveFilters(); render(); });
   $$('#snShift .chip').forEach((c) => c.addEventListener('click', () => { S.snShift = c.dataset.sh; drawMode(); saveFilters(); render(); }));
   $$('[data-snq]').forEach((c) => c.addEventListener('click', () => {

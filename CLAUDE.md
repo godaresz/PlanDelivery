@@ -73,8 +73,10 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    user confirms and types the quarter code. A quarter counts as exported only if row counts still match the export (`arch_index.exported[q].sig`);
    new rows after an export require a new export. No server: there is no background scheduler.
 7. View filter: start/end datetime, end minute inclusive (shift buttons day 07:30–19:59 / night 20:00–07:29 / whole day = day + night 07:30–07:29 next day) + optional backlog of open rows due before start.
-   Every data load/update (page open, upload, auto update, another device's upload) rolls the view to today (`rollToToday`):
-   due mode re-applies the chosen shift button for today (typed range → current shift); ship-date mode → today's working day.
+   Page open always rolls the view to today (`rollToToday`); later data updates roll it only while the user is looking at "now"
+   (`viewingNow`: shift button on, typed range containing now, or today's ship date) — a deliberately chosen past day stays,
+   with a "กำลังดูข้อมูลย้อนหลัง" tag; button "📍 ดูวันปัจจุบัน" jumps back. Due mode re-applies the chosen shift button for today
+   (typed range → current shift); ship-date mode → today's working day (before 07:30 = yesterday).
    Second mode "วันที่ส่ง (Shipping No.)": pick a ship date + shift (ALL / D / N); shows only rows and trucks whose
    Shipping No. date/shift match (due is ignored; rows without a Shipping No. are hidden).
 8. WH1 Window Names start with `1`, WH4 with `4` (used to split the WMS upload).

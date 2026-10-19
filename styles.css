@@ -447,3 +447,5 @@ code { font-family: 'IBM Plex Mono', monospace; font-size: 12px; background: #F3
 @keyframes soonGlow { 50% { box-shadow: 0 0 0 4px rgba(245,158,11,.18); } }
 .auto-min { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .auto-min input { width: 70px; }
+.past-tag { font-size: 12px; padding: 4px 10px; border-radius: 99px; background: #FEF3C7; color: #92400E; font-weight: 600; }
+.f-group .mode + .btn { margin-left: 4px; }
