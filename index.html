@@ -291,6 +291,15 @@
           <span class="hint" id="autoStatus"></span>
         </div>
       </section>
+      <section class="panel" id="logPanel">
+        <div class="panel-h"><h2>ประวัติการอัปโหลด</h2><button class="btn sm ghost" id="btnLogRefresh">↻ รีเฟรช</button>
+          <span class="hint">100 ครั้งล่าสุดจากทุกเครื่อง รวมการอัปเดตอัตโนมัติที่ไม่สำเร็จ</span></div>
+        <div class="table-wrap log-wrap"><table class="tbl mini" id="tblLog"></table></div>
+      </section>
+      <section class="panel" id="volPanel">
+        <div class="panel-h"><h2>ปริมาณข้อมูลที่ดาวน์โหลด</h2><span class="hint">ข้อมูลบีบอัดก่อนเก็บใน Firebase เพื่อไม่ให้เกินโควตาฟรี</span></div>
+        <div id="volBody"></div>
+      </section>
       <section class="panel" id="repPanel">
         <div class="panel-h"><h2>รายงานสิ้นกะ (Excel)</h2></div>
         <p class="hint">บันทึกไฟล์สรุปกะ (สรุปต่อ WH · รายการรถ · งานค้างส่ง) ลงโฟลเดอร์ที่เลือก อัตโนมัติ 15 นาทีหลังจบกะ (07:30 / 20:00) ·
@@ -335,6 +344,8 @@
         <button type="button" class="btn ghost" id="btnAddGroup">+ เพิ่มกลุ่ม เปลี่ยนเวลา</button>
         <button type="button" class="btn ghost" id="btnAddShift">+ เพิ่มกลุ่ม เลื่อนเร็ว/ช้า</button>
         <button type="button" class="btn ghost" id="btnAddWin">+ เพิ่มกำหนดเวลาตาม Window</button>
+        <label class="btn ghost">⇪ นำเข้าตาราง Window จาก Excel<input type="file" id="winFile" accept=".xlsx,.xls,.csv" hidden></label>
+        <button type="button" class="btn ghost" id="btnWinXlsx">⇩ ตาราง Window (Excel)</button>
         <label class="inline">ย้ายรายการที่ส่งแล้วเข้าประวัติหลัง <input type="number" id="keepDays" min="1" max="60" value="7"> วัน (ไม่ลบ)</label>
         <label class="inline">เตือนเมื่อไม่ได้อัปโหลด WMS เกิน <input type="number" id="staleWms" min="5" max="4320" step="5" value="30"> นาที</label>
         <label class="inline">ILMS เกิน <input type="number" id="staleIlms" min="5" max="4320" step="5" value="30"> นาที</label>

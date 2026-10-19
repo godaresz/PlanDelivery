@@ -277,3 +277,24 @@ export async function parseWmsFile(file) {
   }
   return out;
 }
+
+// Window time table (rules dialog import): columns "Window Name" (or "Window") + "Time" ("Due Time" / "เวลา").
+// Returns [{ w: '1D28', time: '15:30' }]; rows without a readable time are skipped.
+export async function parseWindowTimes(file) {
+  const rows = await readTable(file);
+  let h = -1, cw = -1, ct = -1;
+  for (let i = 0; i < Math.min(rows.length, 15) && h < 0; i++) {
+    const hd = rows[i].map(norm);
+    cw = hd.findIndex((x) => x === 'windowname' || x === 'window');
+    ct = hd.findIndex((x) => x === 'time' || x === 'duetime' || x === 'เวลา' || x === 'เวลาส่ง');
+    if (cw >= 0 && ct >= 0) h = i;
+  }
+  if (h < 0) throw new Error('ไม่พบหัวคอลัมน์ Window Name และ Time (หรือ เวลา) ในไฟล์');
+  const out = [];
+  for (let i = h + 1; i < rows.length; i++) {
+    const w = str(rows[i][cw]).toUpperCase(), t = timePart(rows[i][ct]);
+    if (!w || t === null) continue;
+    out.push({ w, time: `${pad(Math.floor(t / 60))}:${pad(t % 60)}` });
+  }
+  return out;
+}

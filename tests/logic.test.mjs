@@ -2,7 +2,7 @@
 // Pure functions only: no browser, no Firebase.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fromKey, fmtKey, timeFromText, isAllZero, parseWmsFile } from '../js/parse.js';
+import { fromKey, fmtKey, timeFromText, isAllZero, parseWmsFile, parseWindowTimes } from '../js/parse.js';
 import { evaluate, lockDues, isComplete, ST, parseTrip, byTrip, mergeWms, mergeIlms, allocateWhole, tripTotals,
   truckSummaries, mergeTruckHist, setSoonMin, kpiDueStart } from '../js/logic.js';
 
@@ -175,4 +175,12 @@ test('CSV: WMS file keeps 24-digit RFID as text and uses the 2nd Truck License c
   assert.equal(rows[0].rk, 1); assert.equal(rows[1].rk, 0);
   assert.equal(rows[0].tr, '71-1234'); assert.equal(rows[0].cf, 1);
   assert.equal(rows[0].dd, '2026-10-15 08:00'); assert.equal(rows[0].sh, '2026-10-15 08:10');
+});
+
+test('Window time table import: Window Name + Time / เวลา columns, Excel-style times, blank rows skipped', async () => {
+  const csv = 'note,,\nWindow Name,Time,x\n1d28,15:30,\n1D29,0.6458333333,\n,16:00,\n1D30,abc,\n';
+  const list = await parseWindowTimes(new File([csv], 'w.csv'));
+  assert.deepEqual(list, [{ w: '1D28', time: '15:30' }]); // CSV text "0.6458…" is not a time (Excel numbers come from .xlsx)
+  const th = await parseWindowTimes(new File(['Window,เวลา\n4D10,8:05\n'], 't.csv'));
+  assert.deepEqual(th, [{ w: '4D10', time: '08:05' }]);
 });

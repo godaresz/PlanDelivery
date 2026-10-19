@@ -107,12 +107,28 @@ function splitBytes(json) {
   }
   return parts.length ? parts : [''];
 }
+// Payloads are gzip-compressed + base64 when the browser can (CompressionStream): ~12% of the JSON size, so every viewer
+// downloads ~8x less after each upload (Spark free plan: limited download volume). meta.enc = 'gz'; old saves are plain JSON.
+const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+const unb64 = (s) => { const bin = atob(s), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return u8; };
+export async function packPayload(json) {
+  if (typeof CompressionStream === 'undefined') return { body: json, enc: '' };
+  const zipped = new Uint8Array(await new Response(new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
+  return { body: b64(zipped), enc: 'gz' };
+}
+export async function unpackPayload(body, enc) {
+  if (enc !== 'gz') return body;
+  return new Response(new Blob([unb64(body)]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+}
 async function saveChunked(prefix, payload, meta) {
-  const parts = splitBytes(JSON.stringify(payload));
+  const json = JSON.stringify(payload);
+  const { body, enc } = await packPayload(json);
+  const parts = splitBytes(body);
   const old = await getDoc(prefix + '_meta');
   const version = Date.now() * 1000 + Math.floor(Math.random() * 1000); // unique even for saves in the same ms
   const cid = 'v' + version.toString(36);
-  const m = { ...meta, chunks: parts.length, cid, version, updatedAt: meta.updatedAt || new Date().toISOString() };
+  const m = { ...meta, chunks: parts.length, cid, version, enc, bytes: new TextEncoder().encode(body).length, raw: json.length,
+    updatedAt: meta.updatedAt || new Date().toISOString() };
   await writeDocs(parts.map((p, i) => [`${prefix}_${cid}_c${i}`, { v: version, data: p }]), []);
   await writeDocs([[prefix + '_meta', m]], []);
   await writeDocs([], chunkIds(prefix, old));
@@ -167,6 +183,7 @@ async function loadChunked(prefix, tries = 3) {
     }
     json += c.data;
   }
+  if (json && meta.enc) json = await unpackPayload(json, meta.enc);
   const data = json ? JSON.parse(json) : null;
   cache[prefix] = { version: meta.version, data };
   idbPut(prefix, { version: meta.version, data, at: Date.now() }); // not awaited: a failed cache write only costs a re-read
@@ -184,6 +201,8 @@ export async function loadAll() {
   return { slide, WH1: wh1, WH4: wh4, ilms, rules, archIndex, truckhist, reasons };
 }
 export const saveSlide = (payload, meta) => saveChunked('slide', payload, meta);
+// file checked but nothing changed: update only the meta doc (file name / time, upload time) — viewers keep their cache
+export const touchMeta = (prefix, patch) => mergeDoc(prefix + '_meta', { ...patch, updatedAt: new Date().toISOString() });
 export const saveWms = (wh, rows, meta) => saveChunked(wh, rows, meta);
 export const saveTruckHist = (hist, meta) => saveChunked('truckhist', hist, meta);
 export const saveIlms = (rows, meta) => saveChunked('ilms', rows, meta);
@@ -229,3 +248,6 @@ export async function deleteArchiveDays(list, index) {
 export const saveRules = (rules) => writeDocs([['rules', { ...rules, updatedAt: new Date().toISOString() }]], []);
 // late / overdue reasons per truck: one small doc { 'Shipping No.': { c: code, t: note, by, at } }, patched per truck
 export const saveReason = (sn, v) => mergeDoc('reasons', { [sn]: v });
+// upload history: one doc { u<ms>: { k, f, ft, at, by, auto, ok, msg } }, patched per entry (null deletes old ones)
+export const loadUploadLog = () => getDoc('uploadlog');
+export const logUpload = (patch) => mergeDoc('uploadlog', patch);

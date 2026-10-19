@@ -26,9 +26,13 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
   delete. Data page button "สร้างสรุปรถใหม่จากประวัติทั้งหมด" rebuilds it from every archive day (one day at a time),
   merged over the saved history so trucks of deleted quarters are kept.
   Viewers load the archive only for the days being viewed (±1 day).
+  An upload whose merged rows equal the stored ones (any order) only updates the meta doc (`touchMeta`): viewers keep their
+  cache; the truck history is saved only when it changed. `uploadlog` = one doc `{ u<ms>: { k, f, ft, at, by, auto, ok, msg } }`
+  (newest 100, failed uploads too), read only on the data page.
   `reasons` = one doc `{ 'Shipping No.': { c: code, t: note, by: email, at: ISO } }` (late / overdue truck reasons, patched per
   truck with `mergeDoc`, watched like the meta docs).
-  Payloads are JSON split into ≤900 KB (UTF-8 bytes) chunk docs named `<prefix>_<cid>_c<i>` (old saves: `<prefix>_c<i>`);
+  Payloads are gzip-compressed + base64 (`packPayload`, meta `enc: 'gz'`, `bytes` = stored size, `raw` = JSON size;
+  ~12% of the JSON, 19/10/2026 — old saves without `enc` are plain JSON and still read) and split into ≤900 KB chunk docs named `<prefix>_<cid>_c<i>` (old saves: `<prefix>_c<i>`);
   new chunks are written first (in batches ≤ 8 MB / 400 ops), then the meta doc (`cid`, `version`), then old chunks are
   deleted — a failed save keeps the old data; readers retry if a chunk's `v` ≠ meta.version. `arch_index` is updated
   field by field (`mergeDoc`, setDoc merge) so concurrent devices don't overwrite each other. Viewers watch only the meta docs.
@@ -49,7 +53,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    - Default Dock rules: S0,S2,S7,S9: 07:30→08:30, 08:30→09:30 · S5,S6: 07:30→09:30, 08:30→10:30 (editable in the app).
    - **Window rule** (agreed 19/10/2026, `{type:'window', windows, time}`): Window Name **1D28 → Due 15:30 of the day of its
      Shipping No.** (no truck yet → the WMS Due Date's day). Order in DataSlide still uses DataSlide; checked before the Dock
-     rules (source "Window"). Editable in the rules dialog ("+ เพิ่มกำหนดเวลาตาม Window"). Saved rules without `winInit` get the
+     rules (source "Window"). Editable in the rules dialog ("+ เพิ่มกำหนดเวลาตาม Window"), or imported from Excel / CSV
+     (columns Window Name + Time / เวลา; replaces all Window rules, grouped by time; a Window may appear in one rule only). Saved rules without `winInit` get the
      default 1D28 rule merged in (`withRuleDefaults`) until the rules are saved once.
    - **CONFIRMED rows keep the due they were confirmed with** (agreed 15/10/2026): `lockDues` stamps `du` (+ `dsrc`) on a
      CONFIRMED row once — at the WMS upload that brings it, and for all unstamped confirmed rows just before a new
@@ -125,6 +130,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
      out by pallets and add up; the comparison uses the estimate of the shipped part only (estS) so an unfinished range
      is still fair. Back-test on real data Sep–Oct (53 shifts per WH,
      learning only from earlier data): mean error WH1 4.1%, WH4 5.7%.
+     A weekday factor was back-tested on 19/10/2026 (~90 shifts per WH): error rose (WH1 6.57% → 6.66–6.80%, WH4 6.61% →
+     6.66–6.76%), so Est does not use the weekday.
 
    - Ship-date mode (Est and Plan): a row whose due is outside its truck's shift (sent early / old backlog) is bucketed
      inside the shift — its Shipping Time if that is in the shift, else the due moved to the nearest shift edge
@@ -156,6 +163,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    legend rows / chips / tiles stagger in, chart bars grow, the line draws and points pop; big numbers count up (`countUp`).
    On the silent 1-min refresh, numbers with `data-k` (and nav badges) that changed glow briefly (`flashChanges`:
    amber = up, blue = down). All motion is off with prefers-reduced-motion.
+   Data page: upload history (last 100, all devices, auto + failed) and a download-volume panel (compressed size per
+   payload, MB per viewer per upload / day at the auto-update interval vs the ~10 GB/month free quota).
    **Other features**: data cards show file time (`meta.fileAt` = file.lastModified) + upload time ·
    browser alerts per device (🔔 button, localStorage `sc_notify`): Notification + beep when a truck newly becomes "soon" or
    overdue, only while viewing now; what is on screen at open / WH or mode change is not alerted (`notifyCheck`) ·

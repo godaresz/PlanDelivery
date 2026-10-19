@@ -1,5 +1,5 @@
 import * as store from './store.js';
-import { parseSlideFile, parseWmsFile, parseIlmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
+import { parseSlideFile, parseWmsFile, parseIlmsFile, parseWindowTimes, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
 import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -339,6 +339,7 @@ async function reload() {
     setSoonMin(S.rules.soonMin);
     S.hist = S.data.truckhist.data || { WH1: {}, WH4: {} };
     S.reasons = S.data.reasons || {};
+    S.log = null; // upload history is re-read (another device may have uploaded)
     S.ilmsMap = new Map((S.data.ilms.data || []).map((r) => [r.tp, { ...r, dt: fromKey(r.dt) }]));
     // page open: always today; later updates follow "now" only while the user is looking at now (a past day stays put)
     if (!S.loadedOnce || viewingNow()) rollToToday();
@@ -543,6 +544,7 @@ function renderAll() {
   renderOvPlan();
   renderDetail(rows);
   renderCheck(all, scope, trips);
+  renderVolume(); renderUploadLog();
   renderKpi();
   const badge = (id, n, cls = '') => { const el = $(id); el.textContent = n || ''; el.className = 'cnt ' + cls; };
   badge('#cntWin', byWindow(rows).filter((x) => x.od.p.size + x.od.r.size > 0).length, 'red');
@@ -1278,6 +1280,55 @@ function renderPlanHour() {
   $('#btnPlanHourX').addEventListener('click', () => { S.planSel = null; render(true); });
 }
 
+// ---------- upload history (data page): last LOG_KEEP uploads of any device, incl. failed auto-updates ----------
+const LOG_KEEP = 100;
+const KIND_TH = { wms: 'WMS', ilms: 'ILMS', slide: 'DataSlide' };
+async function writeUploadLog(kind, file, auto, ok, msg) {
+  try {
+    const cur = (await store.loadUploadLog()) || {};
+    const ids = Object.keys(cur).filter((k) => k.startsWith('u')).sort();
+    const patch = { [`u${Date.now()}`]: { k: kind, f: file.name, ft: file.lastModified || null, at: new Date().toISOString(),
+      by: (S.user && S.user.email) || '', auto: !!auto, ok, msg: String(msg || '').slice(0, 300) } };
+    ids.slice(0, Math.max(0, ids.length + 1 - LOG_KEEP)).forEach((k) => { patch[k] = null; }); // keep the newest LOG_KEEP
+    await store.logUpload(patch);
+    S.log = null; // re-read when the data page is shown
+  } catch (e) { console.warn('upload log', e); } // the log must never block an upload
+}
+async function renderUploadLog(force = false) {
+  const el = $('#tblLog');
+  if (!el || S.page !== 'data') return;
+  if (!S.log || force) {
+    if (S.logLoading) return;
+    S.logLoading = true;
+    try { S.log = (await store.loadUploadLog()) || {}; } catch { S.log = {}; } finally { S.logLoading = false; }
+  }
+  const rows = Object.entries(S.log).filter(([k]) => k.startsWith('u')).map(([, v]) => v).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  el.innerHTML = rows.length ? `<thead><tr><th>เวลาอัปโหลด</th><th>ประเภท</th><th>ไฟล์</th><th>เวลาไฟล์</th><th>โดย</th><th>ผล</th><th>รายละเอียด</th></tr></thead>
+    <tbody>${rows.map((r) => `<tr><td class="t">${fmtShowFull(new Date(r.at))}</td><td>${KIND_TH[r.k] || esc(r.k)}</td><td>${esc(r.f)}</td>
+      <td class="t">${r.ft ? fmtShow(new Date(r.ft)) : '-'}</td><td>${r.auto ? '🔄 อัตโนมัติ' : '👤'} ${esc(r.by || '')}</td>
+      <td>${r.ok ? '<span class="pill done_on">สำเร็จ</span>' : '<span class="pill overdue">ไม่สำเร็จ</span>'}</td><td class="log-msg">${esc(r.msg)}</td></tr>`).join('')}</tbody>`
+    : '<tbody><tr><td class="hint">ยังไม่มีประวัติ (เริ่มบันทึกตั้งแต่การอัปโหลดครั้งถัดไป)</td></tr></tbody>';
+}
+// data volume: what each viewer downloads per upload (compressed payloads), against the Spark free download quota
+function renderVolume() {
+  const el = $('#volBody');
+  if (!el || !S.data) return;
+  const mb = (b) => (b / 1048576).toFixed(b < 1048576 ? 2 : 1) + ' MB';
+  const items = [['DataSlide', S.data.slide.meta], ['WMS WH1', S.data.WH1.meta], ['WMS WH4', S.data.WH4.meta], ['ILMS', S.data.ilms.meta], ['สรุปรถ (Est / KPI)', S.data.truckhist.meta]];
+  const size = (m) => (m ? m.bytes || null : null);
+  const perWms = (size(S.data.WH1.meta) || 0) + (size(S.data.WH4.meta) || 0) + (size(S.data.truckhist.meta) || 0);
+  const perIlms = size(S.data.ilms.meta) || 0, per = 1440 / autoMin();
+  const day = (perWms + perIlms) * per, quotaDay = (10 * 1073741824) / 30;
+  const unknown = items.some(([, m]) => m && !m.bytes);
+  el.innerHTML = `<table class="tbl mini"><thead><tr><th>ข้อมูล</th><th class="n">ขนาดที่ดาวน์โหลด</th><th class="n">ขนาดจริง (JSON)</th><th>บีบอัด</th></tr></thead>
+    <tbody>${items.map(([l, m]) => `<tr><td>${l}</td><td class="n">${size(m) ? mb(size(m)) : '<span class="z">-</span>'}</td>
+      <td class="n">${m && m.raw ? mb(m.raw) : '<span class="z">-</span>'}</td><td>${m ? (m.enc === 'gz' ? `<span class="pill done_on">gzip ${Math.round((m.bytes / m.raw) * 100)}%</span>` : '<span class="pill pending">ยังไม่บีบอัด</span>') : ''}</td></tr>`).join('')}</tbody></table>
+    <p class="hint">อัปโหลด WMS 1 ครั้ง แต่ละเครื่องที่เปิดเว็บอยู่ดาวน์โหลดใหม่ประมาณ <b>${mb(perWms)}</b> · ILMS <b>${mb(perIlms)}</b> ·
+      ถ้าอัปเดตทุก ${autoMin()} นาที เครื่องที่เปิดค้างทั้งวันใช้ประมาณ <b>${mb(day)}/วัน</b> ·
+      โควตาดาวน์โหลดฟรีของ Firebase ≈ 10 GB/เดือน (≈ ${mb(quotaDay)}/วัน) → เปิดค้างพร้อมกันได้ประมาณ <b>${day ? Math.max(1, Math.floor(quotaDay / day)) : '-'} เครื่อง</b>
+      ${unknown ? '<br>ข้อมูลที่ยังไม่บีบอัดจะถูกบีบอัดเองในการอัปโหลดครั้งถัดไปของข้อมูลนั้น' : ''}</p>`;
+}
+
 // ---------- Est accuracy history (back-test on the truck history, learning only from days before each shift) ----------
 async function computeAccuracy(days = 30) {
   const btn = $('#btnAcc'); btn.disabled = true;
@@ -1646,16 +1697,37 @@ async function onUpload(e) {
     label.removeAttribute('disabled');
   }
 }
-// upload one file (manual button or the folder auto-update). auto = no confirm dialogs (rows of other WH are skipped)
+// same rows regardless of order (a merge puts kept confirmed rows after the file's rows)
+function sameRows(a, b) {
+  if (a.length !== b.length) return false;
+  const canon = (rows) => rows.map((r) => JSON.stringify(r)).sort().join('\n');
+  return canon(a) === canon(b);
+}
+// upload one file and keep a log entry (who / when / which file / result) in the shared doc "uploadlog"
 async function uploadFile(kind, file, auto = false) {
+  S.upMsg = null;
+  try {
+    await uploadFileRun(kind, file, auto);
+    if (S.upMsg) await writeUploadLog(kind, file, auto, true, S.upMsg);
+  } catch (e) {
+    await writeUploadLog(kind, file, auto, false, e.message);
+    throw e;
+  }
+}
+// upload one file (manual button or the folder auto-update). auto = no confirm dialogs (rows of other WH are skipped)
+async function uploadFileRun(kind, file, auto = false) {
   if (kind === 'ilms') {
     toast('กำลังอ่านไฟล์ ILMS…', false, 60000);
     const res = await parseIlmsFile(file);
     if (!res.rows.length) throw new Error('ไม่พบ Truckplan No ของ WH1 / WH4 ในไฟล์');
     const latest = await store.loadAll();
-    const m = mergeIlms((latest.ilms && latest.ilms.data) || [], res.rows);
-    await store.saveIlms(m.rows, { fileName: file.name, fileAt: file.lastModified || null, count: m.rows.length, fromFile: res.rows.length });
-    toast(`อัปเดต ILMS แล้ว: ${res.rows.length.toLocaleString()} คันจากไฟล์ (WH1/WH4)` + (res.other ? ` · ข้ามคลังอื่น ${res.other}` : '')
+    const oldIlms = (latest.ilms && latest.ilms.data) || [];
+    const m = mergeIlms(oldIlms, res.rows);
+    const ilmsMeta = { fileName: file.name, fileAt: file.lastModified || null, count: m.rows.length, fromFile: res.rows.length };
+    // nothing changed: only the meta doc is updated, so viewers don't download the same data again
+    if (latest.ilms && latest.ilms.meta && sameRows(m.rows, oldIlms)) await store.touchMeta('ilms', ilmsMeta);
+    else await store.saveIlms(m.rows, ilmsMeta);
+    toast(S.upMsg = `อัปเดต ILMS แล้ว: ${res.rows.length.toLocaleString()} คันจากไฟล์ (WH1/WH4)` + (res.other ? ` · ข้ามคลังอื่น ${res.other}` : '')
       + (m.skipped ? ` · ข้ามที่ COMPLETE แล้ว ${m.skipped.toLocaleString()}` : '')
       + ` · รวมเก็บไว้ ${m.rows.length.toLocaleString()} คัน`, false, 8000);
   } else if (kind === 'slide') {
@@ -1664,7 +1736,7 @@ async function uploadFile(kind, file, auto = false) {
     await lockConfirmedDues(); // confirmed rows keep the due they were confirmed with (stamped with the old slide)
     await store.saveSlide({ orders: res.orders, dues: res.dues },
       { fileName: file.name, fileAt: file.lastModified || null, count: res.orders.length, valid: res.validCount });
-    toast(`อัปเดต DataSlide แล้ว: ${res.orders.length.toLocaleString()} Order (ล้างข้อมูลเดิมแล้ว)`);
+    toast(S.upMsg = `อัปเดต DataSlide แล้ว: ${res.orders.length.toLocaleString()} Order (ล้างข้อมูลเดิมแล้ว)`);
   } else {
     toast('กำลังอ่านไฟล์ WMS…', false, 60000);
     const rows = await parseWmsFile(file);
@@ -1684,6 +1756,7 @@ async function uploadFile(kind, file, auto = false) {
     const msgs = [];
     const index = latest.archIndex || { WH1: {}, WH4: {} };
     const hist = (latest.truckhist && latest.truckhist.data) || { WH1: {}, WH4: {} };
+    const histBefore = JSON.stringify(hist);
     const slideNow = slideMapOf(latest.slide && latest.slide.data);
     const rulesNow = withRuleDefaults(latest.rules).groups;
     for (const wh of found) { // a warehouse missing from the file keeps its old data
@@ -1709,15 +1782,17 @@ async function uploadFile(kind, file, auto = false) {
       hist[wh] = mergeTruckHist(hist[wh] || {}, truckAccDone(acc));
       const ln = truckAccLinks(acc), old = (hist.links && hist.links[wh]) || { parts: {}, sups: {} };
       hist.links = { ...(hist.links || {}), [wh]: { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } } };
-      await store.saveWms(wh, m.rows, { fileName: file.name, fileAt: file.lastModified || null, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped });
+      const wmsMeta = { fileName: file.name, fileAt: file.lastModified || null, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped };
+      if (latest[wh] && latest[wh].meta && !m.toArchive.length && sameRows(m.rows, oldRows)) await store.touchMeta(wh, wmsMeta);
+      else await store.saveWms(wh, m.rows, wmsMeta);
       msgs.push(`${wh} ${split[wh].length.toLocaleString()} แถว` + (m.skipped ? ` · ข้ามที่ Confirm แล้ว ${m.skipped.toLocaleString()}` : '')
         + (m.kept ? ` · เก็บที่ส่งแล้วจากรอบก่อน ${m.kept.toLocaleString()}` : '')
         + (m.dropped ? ` · ไม่มีในไฟล์ใหม่ (ยังไม่ Confirm) เอาออก ${m.dropped.toLocaleString()}` : '')
         + (m.toArchive.length ? ` · ย้ายเข้าประวัติ ${m.toArchive.length.toLocaleString()}` : ''));
     }
-    await store.saveTruckHist(hist, { WH1: Object.keys(hist.WH1 || {}).length, WH4: Object.keys(hist.WH4 || {}).length });
+    if (JSON.stringify(hist) !== histBefore) await store.saveTruckHist(hist, { WH1: Object.keys(hist.WH1 || {}).length, WH4: Object.keys(hist.WH4 || {}).length });
     const miss = WHS.filter((wh) => !split[wh].length);
-    toast(`อัปเดต WMS แล้ว: ${msgs.join(' · ')}` + (miss.length ? ` · ไม่มีข้อมูล ${miss.join(', ')} ในไฟล์ (คงข้อมูลเดิม)` : '')
+    toast(S.upMsg = `อัปเดต WMS แล้ว: ${msgs.join(' · ')}` + (miss.length ? ` · ไม่มีข้อมูล ${miss.join(', ')} ในไฟล์ (คงข้อมูลเดิม)` : '')
       + (other ? ` · ข้ามแถวอื่น ${other}` : ''), false, 9000);
   }
   await reload();
@@ -1926,7 +2001,7 @@ function readRules() {
 
 // ---------- wiring ----------
 function bind() {
-  $$('input[type=file]').forEach((i) => i.addEventListener('change', onUpload));
+  $$('input[type=file][data-kind]').forEach((i) => i.addEventListener('change', onUpload));
   $$('.quick .chip[data-q]').forEach((c) => c.addEventListener('click', () => setRange(c.dataset.q)));
   $$('.dt-wrap input').forEach((i) => {
     i.addEventListener('click', () => { try { i.showPicker(); } catch { /* older browsers: native behaviour */ } });
@@ -2022,7 +2097,37 @@ function bind() {
   $('#btnAddGroup').addEventListener('click', () => { readRules(); draft.groups.push({ docks: [], map: [{ orig: '', slide: '' }] }); drawRules(); });
   $('#btnAddShift').addEventListener('click', () => { readRules(); draft.groups.push({ type: 'shift', docks: [], shift: -30 }); drawRules(); });
   $('#btnAddWin').addEventListener('click', () => { readRules(); draft.groups.push({ type: 'window', windows: [], time: '15:30' }); drawRules(); });
+  // Window time table from Excel / CSV: replaces all Window rules of the draft (saved with "บันทึกกฎ")
+  $('#winFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    try {
+      const list = await parseWindowTimes(f);
+      if (!list.length) throw new Error('ไม่พบแถวที่มี Window Name และเวลา');
+      const byTime = new Map();
+      for (const { w, time } of list) { if (!byTime.has(time)) byTime.set(time, new Set()); byTime.get(time).add(w); }
+      const dup = list.length - new Set(list.map((x) => x.w)).size;
+      if (!confirm(`นำเข้า ${new Set(list.map((x) => x.w)).size} Window (${byTime.size} เวลา) แทนกฎ Window เดิมทั้งหมด?${dup ? `\n(มี Window ซ้ำ ${dup} แถว — ใช้เวลาของแถวแรก)` : ''}\nกด "บันทึกกฎ" เพื่อบันทึก`)) return;
+      readRules();
+      const seen = new Set(), groups = [];
+      for (const [time, ws] of [...byTime].sort((a, b) => a[0].localeCompare(b[0]))) {
+        const windows = [...ws].filter((w) => !seen.has(w)).sort(); windows.forEach((w) => seen.add(w));
+        if (windows.length) groups.push({ type: 'window', windows, time });
+      }
+      draft.groups = draft.groups.filter((g) => g.type !== 'window').concat(groups);
+      drawRules(); $('#rulesErr').textContent = '';
+    } catch (err) { $('#rulesErr').textContent = 'นำเข้าไม่สำเร็จ: ' + err.message; }
+  });
+  // template / current table as Excel
+  $('#btnWinXlsx').addEventListener('click', () => {
+    readRules();
+    const rows = draft.groups.filter((g) => g.type === 'window').flatMap((g) => g.windows.map((w) => ({ 'Window Name': w, Time: g.time })));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ 'Window Name': '1D28', Time: '15:30' }]), 'WindowTime');
+    XLSX.writeFile(wb, 'WindowTime.xlsx');
+  });
   $('#btnCheckXlsx').addEventListener('click', exportCheck);
+  $('#btnLogRefresh').addEventListener('click', () => renderUploadLog(true));
   $('#btnKpiXlsx').addEventListener('click', exportKpi);
   $$('#kpiDays .chip').forEach((c) => c.addEventListener('click', () => { S.kpiDays = +c.dataset.days; lsSet('sc_kpi_days', c.dataset.days); render(); }));
   $$('#kpiWh .tab').forEach((c) => c.addEventListener('click', () => { $(`#whTabs .tab[data-wh="${c.dataset.wh}"]`).click(); }));
@@ -2032,7 +2137,10 @@ function bind() {
     readRules();
     const bad = draft.groups.some((g) => g.type === 'window' ? !g.windows.length || !/^\d{2}:\d{2}$/.test(g.time || '') : !g.docks.length || (g.type === 'shift' ? !Number.isInteger(g.shift) || !g.shift
       : g.map.some((m) => !/^\d{2}:\d{2}$/.test(m.orig) || !/^\d{2}:\d{2}$/.test(m.slide))));
-    if (bad) { $('#rulesErr').textContent = 'กรุณาใส่ Dock และเวลาให้ครบทุกแถว'; return; }
+    if (bad) { $('#rulesErr').textContent = 'กรุณาใส่ Dock / Window และเวลาให้ครบทุกแถว'; return; }
+    const wAll = draft.groups.filter((g) => g.type === 'window').flatMap((g) => g.windows);
+    const wDup = [...new Set(wAll.filter((w, i) => wAll.indexOf(w) !== i))];
+    if (wDup.length) { $('#rulesErr').textContent = `Window ซ้ำในหลายกฎ: ${wDup.join(', ')}`; return; }
     draft.groups = draft.groups.filter((g) => g.type || g.map.length);
     draft.winInit = true; // window rules are now part of the saved rules (a deleted default stays deleted)
     draft.groups.forEach((g) => delete g.dir);
