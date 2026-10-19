@@ -547,3 +547,4 @@ body.anim .tb-bar span { animation: growX .8s var(--ease) both; transform-origin
 .tb-chip.zero { opacity: .45; }
 .ov-plan svg { display: block; }
 .ov-plan .bv { font-size: 10.5px; }
+.plan-chart .dv { font: 700 11px 'IBM Plex Sans Thai', sans-serif; fill: #047857; paint-order: stroke; stroke: #fff; stroke-width: 3px; }

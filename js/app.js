@@ -621,11 +621,11 @@ function renderOvPlan() {
       return `${cur ? `<rect x="${cx(i) - step / 2}" y="${P.t - 10}" width="${step}" height="${H - P.t - P.b + 10}" class="now"/>` : ''}
         <rect x="${cx(i) - bw / 2}" y="${y(n)}" width="${bw}" height="${Math.max(0, H - P.b - y(n))}" rx="3" class="bar"><title>${x.hourLbl(h)} Plan ${n} · จัดแล้ว ${sum(h, (c) => c.sn.size)} · ออกแล้ว ${lf}</title></rect>
         ${n ? `<text x="${cx(i)}" y="${y(n) - 3}" class="bv" text-anchor="middle">${n}</text>` : ''}
-        ${lf ? `<circle cx="${cx(i)}" cy="${y(lf)}" r="3.5" class="dot"/>` : ''}
         ${i % Math.ceil(L.length / 13) === 0 ? `<text x="${cx(i)}" y="${H - 6}" class="ax" text-anchor="middle">${String(h.t.getHours()).padStart(2, '0')}</text>` : ''}`;
     }).join('')}
     <path d="${L.map((h, i) => `${i ? 'L' : 'M'}${cx(i).toFixed(1)},${y(sum(h, (c) => c.sn.size)).toFixed(1)}`).join('')}" class="ln"/>
-    ${L.map((h, i) => { const v = sum(h, (c) => c.sn.size); return v ? `<circle cx="${cx(i)}" cy="${y(v)}" r="2.5" class="lnp"/><text x="${cx(i) + 5}" y="${Math.abs(y(v) - y(sum(h, (c) => c.n))) < 14 ? y(v) + 13 : y(v) - 4}" class="lv">${v}</text>` : ''; }).join('')}</svg>
+    ${L.map((h, i) => { const v = sum(h, (c) => c.sn.size); return v ? `<circle cx="${cx(i)}" cy="${y(v)}" r="2.5" class="lnp"/><text x="${cx(i) + 5}" y="${Math.abs(y(v) - y(sum(h, (c) => c.n))) < 14 ? y(v) + 13 : y(v) - 4}" class="lv">${v}</text>` : ''; }).join('')}
+    ${L.map((h, i) => { const v = sum(h, (c) => c.left.size); return v ? `<circle cx="${cx(i)}" cy="${y(v)}" r="4" class="dot"/><text x="${cx(i) - 6}" y="${y(v) + 4}" class="dv" text-anchor="end">${v}</text>` : ''; }).join('')}</svg>
     <div class="plan-legend"><span><i class="lg-bar"></i>รถตาม Plan</span><span><i class="lg-line"></i>จัดรถแล้ว (Shipping No.)</span><span><i class="lg-dot"></i>ออกแล้ว</span><span class="muted">แถบเหลือง = ชั่วโมงนี้</span></div>`;
 }
 
@@ -921,9 +921,11 @@ function renderPlan(all, scope, trips) {
   }
   for (const x of trips) {
     if (!scope.includes(x.whOwn)) continue;
-    if (x.dueStart) place(S.mode === 'sn' && x.info ? clampToShift(x.dueStart, x.info) : x.dueStart).wh[x.whOwn].sn.add(x.sn);
-    // departures go to their own hour, even outside the range (a truck may leave before its shift starts)
-    if (x.left && x.dep) { const d = x.dep; slot(hk(d), new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours())).wh[x.whOwn].left.add(x.sn); }
+    // assigned and left trucks both go to the hour of the truck's first due (Due start), so "left" reads against "assigned"
+    // (user 19/10/2026); a left truck without a due falls back to its departure hour
+    const h = x.dueStart ? place(S.mode === 'sn' && x.info ? clampToShift(x.dueStart, x.info) : x.dueStart) : null;
+    if (h) h.wh[x.whOwn].sn.add(x.sn);
+    if (x.left && (h || x.dep)) (h || slot(hk(x.dep), new Date(x.dep.getFullYear(), x.dep.getMonth(), x.dep.getDate(), x.dep.getHours()))).wh[x.whOwn].left.add(x.sn);
   }
   const list = [...hours.values()].sort((a, b) => a.key.localeCompare(b.key));
   const sum = (h, f) => scope.reduce((a, w) => a + f(h.wh[w]), 0);
@@ -945,11 +947,11 @@ function renderPlan(all, scope, trips) {
   $('#planTiles').innerHTML = list.length ? [
     tile('pending', 'รถตาม Plan (Est)', tot.n, `${f1(tot.est)} คัน · ${tot.p} Pallet · ${tot.r} Rack`),
     tile('trip', 'จัดรถแล้ว (Shipping No.)', tot.sn, `นับตาม Due เริ่มของรถ · งานที่มี Shipping No. แล้ว ${tot.hasSn}/${tot.p + tot.r} หน่วย (${tot.p + tot.r ? Math.round((tot.hasSn / (tot.p + tot.r)) * 100) : 0}%)`),
-    tile('done', 'ออกแล้ว', tot.left, upTo ? `ถึงชั่วโมงที่แล้ว Plan ${upTo.n} · ออกจริง ${upTo.left} คัน <b class="${upTo.left >= upTo.n ? 'c-dn' : 'c-od'}">(${upTo.left - upTo.n >= 0 ? '+' : ''}${upTo.left - upTo.n})</b>` : 'นับตามเวลาออกจริง'),
+    tile('done', 'ออกแล้ว', tot.left, upTo ? `ถึงชั่วโมงที่แล้ว Plan ${upTo.n} · ออกจริง ${upTo.left} คัน <b class="${upTo.left >= upTo.n ? 'c-dn' : 'c-od'}">(${upTo.left - upTo.n >= 0 ? '+' : ''}${upTo.left - upTo.n})</b>` : 'นับตาม Due แรกของรถ'),
     tile('overdue', 'ชั่วโมงที่ใช้รถมากสุด', peak ? sum(peak, (c) => c.n) : 0, peak ? `${dayLbl(peak)} ${hourLbl(peak)}` : ''),
   ].join('') : '';
   $('#cntPlan').textContent = tot.n || '';
-  $('#planHint').textContent = notes.join(' · ') || 'Plan = รถที่ต้องใช้ (ปัดเป็นคันเต็ม ยอดรวม = ผลรวมทุกชั่วโมง รวมงานที่ส่งแล้ว จึงมากกว่าหน้าประมาณการรถที่นับเฉพาะงานค้าง) · จัดแล้ว = รถที่มี Shipping No. ซึ่ง Due เริ่มอยู่ในชั่วโมงนั้น · มี SN = Pallet+Rack ของชั่วโมงนั้นที่มี Shipping No. แล้ว · ออกแล้ว = เวลาออกจริง (ILMS / WMS)';
+  $('#planHint').textContent = notes.join(' · ') || 'Plan = รถที่ต้องใช้ (ปัดเป็นคันเต็ม ยอดรวม = ผลรวมทุกชั่วโมง รวมงานที่ส่งแล้ว จึงมากกว่าหน้าประมาณการรถที่นับเฉพาะงานค้าง) · จัดแล้ว = รถที่มี Shipping No. ซึ่ง Due เริ่มอยู่ในชั่วโมงนั้น · มี SN = Pallet+Rack ของชั่วโมงนั้นที่มี Shipping No. แล้ว · ออกแล้ว = รถที่ออกแล้ว (ILMS / WMS) นับในชั่วโมงของ Due แรกของรถ';
 
   // chart: bars = trucks needed (Plan), line = trucks with a Shipping No., dots = trucks that left
   const now = new Date();
@@ -972,10 +974,11 @@ function renderPlan(all, scope, trips) {
         ${n ? `<text x="${cx(i)}" y="${y(n) - 5}" class="bv" text-anchor="middle">${n}</text>` : ''}
         <text x="${cx(i)}" y="${H - P.b + 15}" class="ax" text-anchor="middle">${h.before ? 'ก่อน' : String(h.t.getHours()).padStart(2, '0')}</text>
         ${!h.before && (i === 0 || list[i - 1].before || hourBucket(list[i - 1].t).day !== hourBucket(h.t).day) ? `<text x="${cx(i)}" y="${H - P.b + 30}" class="ax d" text-anchor="middle">${fmtShow(h.t).slice(0, 5)}</text>` : ''}
-        ${sum(h, (c) => c.left.size) ? `<circle cx="${cx(i)}" cy="${y(sum(h, (c) => c.left.size))}" r="4" class="dot"/>` : ''}</g>`;
+</g>`;
     }).join('')}
     <path d="${line}" class="ln"/>
     ${list.map((h, i) => { const v = sum(h, (c) => c.sn.size); return `<circle cx="${cx(i)}" cy="${y(v)}" r="3" class="lnp"/>${v ? `<text x="${cx(i) + 6}" y="${Math.abs(y(v) - y(sum(h, (c) => c.n))) < 16 ? y(v) + 15 : y(v) - 6}" class="lv">${v}</text>` : ''}`; }).join('')}
+    ${list.map((h, i) => { const v = sum(h, (c) => c.left.size); return v ? `<circle cx="${cx(i)}" cy="${y(v)}" r="4.5" class="dot"><title>ออกแล้ว ${v} คัน</title></circle><text x="${cx(i) - 7}" y="${y(v) + 4}" class="dv" text-anchor="end">${v}</text>` : ''; }).join('')}
     </svg></div>`;
 
   // table: one row per hour; per WH: Plan trucks, work, assigned, left
