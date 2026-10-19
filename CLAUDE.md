@@ -152,6 +152,10 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    one group: left on time / late, loading, soon, not due, overdue, overdue > escMin; a chip opens the truck page filtered to
    exactly that group, so the counts match) next to a
    small hourly chart (from the Plan computation: bars Plan, purple line trucks with a Shipping No., dots trucks that left); then top overdue Windows and trucks not left.
+   Motion (19/10/2026): on user actions / new data (`body.anim`) donut segments sweep in, the truck bar sweeps left→right,
+   legend rows / chips / tiles stagger in, chart bars grow, the line draws and points pop; big numbers count up (`countUp`).
+   On the silent 1-min refresh, numbers with `data-k` (and nav badges) that changed glow briefly (`flashChanges`:
+   amber = up, blue = down). All motion is off with prefers-reduced-motion.
    **Other features**: data cards show file time (`meta.fileAt` = file.lastModified) + upload time ·
    browser alerts per device (🔔 button, localStorage `sc_notify`): Notification + beep when a truck newly becomes "soon" or
    overdue, only while viewing now; what is on screen at open / WH or mode change is not alerted (`notifyCheck`) ·

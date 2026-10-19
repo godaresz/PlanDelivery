@@ -503,8 +503,14 @@ td.plan-bar span { display: block; height: 10px; border-radius: 99px; background
 .dn-wrap { position: relative; width: 140px; height: 140px; }
 .dn-wrap .donut { width: 140px; height: 140px; display: block; }
 .dn-seg { transition: stroke-dasharray .9s var(--ease); }
-body.anim .dn-seg { animation: dnIn 1s var(--ease) both; }
+/* donut: segments sweep in one after another (clockwise), the ring turns in, the centre pops */
+body.anim .dn-seg { animation: dnIn .75s cubic-bezier(.65,0,.35,1) both; animation-delay: calc(.15s + var(--d, 0) * .9s); }
 @keyframes dnIn { from { stroke-dasharray: 0 1000; } }
+body.anim .donut { animation: dnTurn 1.1s var(--ease) both; }
+@keyframes dnTurn { from { transform: rotate(-60deg) scale(.85); opacity: 0; } }
+body.anim .dn-c { animation: popIn .6s var(--ease) both .55s; }
+.dn-seg { transition: stroke-width .25s var(--ease), filter .25s; cursor: default; }
+.dn-seg:hover { stroke-width: 20; filter: brightness(1.08); }
 .dn-c { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; }
 .dn-c b { font-size: 30px; font-weight: 700; color: #065F46; }
 .dn-c b small { font-size: 15px; }
@@ -536,7 +542,15 @@ body.anim .dn-seg { animation: dnIn 1s var(--ease) both; }
 .tb-pct b { font-size: 26px; color: #059669; }
 .tb-bar { display: flex; height: 34px; border-radius: 10px; overflow: hidden; gap: 2px; background: #EEF0F3; }
 .tb-bar span { display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 13px; min-width: 22px; transition: flex .8s var(--ease); }
-body.anim .tb-bar span { animation: growX .8s var(--ease) both; transform-origin: left; }
+/* truck status bar: one sweep left to right, then a soft shine */
+body.anim .tb-bar { animation: sweepIn 1s cubic-bezier(.65,0,.35,1) both .1s; }
+@keyframes sweepIn { from { clip-path: inset(0 100% 0 0 round 10px); } to { clip-path: inset(0 0 0 0 round 10px); } }
+.tb-bar { position: relative; }
+.tb-bar::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.35) 50%, transparent 70%); transform: translateX(-100%);
+  animation: shine 6s 1.6s infinite; }
+.tb-bar span { transition: flex .8s var(--ease), filter .2s; }
+.tb-bar span:hover { filter: brightness(1.1); }
 .tb-on { background: #10B981; } .tb-late { background: #F59E0B; } .tb-load { background: #8B5CF6; } .tb-soon { background: #FBBF24; }
 .tb-pend { background: #2563EB; } .tb-od { background: #EF4444; } .tb-esc { background: #991B1B; }
 .tb-bar .tb-soon { color: #78350F; }
@@ -559,3 +573,38 @@ body.anim .tb-bar span { animation: growX .8s var(--ease) both; transform-origin
 .plan-chart .hit.sn:hover { fill: rgba(124,58,237,.12); }
 .plan-hour { border: 2px solid #BFDBFE; animation: fadeUp .35s var(--ease) both; }
 .plan-chart .dot, .plan-chart .dv, .plan-chart .lv, .plan-chart .bv, .plan-chart .lnp, .plan-chart .ln, .plan-chart .now { pointer-events: none; }
+
+/* ===== motion polish (19/10/2026) ===== */
+@keyframes popIn { from { opacity: 0; transform: scale(.6); } 60% { transform: scale(1.06); } }
+@keyframes slideIn { from { opacity: 0; transform: translateX(14px); } }
+/* overview legend rows, chips and footer come in one after another */
+body.anim .lg-row { animation: slideIn .5s var(--ease) both; }
+body.anim .lg-row:nth-child(2) { animation-delay: .08s; } body.anim .lg-row:nth-child(3) { animation-delay: .16s; }
+body.anim .lg-row:nth-child(4) { animation-delay: .24s; }
+body.anim .wh-foot { animation: fadeUp .5s var(--ease) both .35s; }
+body.anim .tb-chip { animation: popIn .45s var(--ease) both; }
+body.anim .tb-chip:nth-child(2) { animation-delay: .05s; } body.anim .tb-chip:nth-child(3) { animation-delay: .1s; }
+body.anim .tb-chip:nth-child(4) { animation-delay: .15s; } body.anim .tb-chip:nth-child(5) { animation-delay: .2s; }
+body.anim .tb-chip:nth-child(6) { animation-delay: .25s; } body.anim .tb-chip:nth-child(n+7) { animation-delay: .3s; }
+body.anim .kpi-wh, body.anim .chk-tile { animation: fadeUp .55s var(--ease) both; }
+body.anim .kpi-wh:nth-child(2) { animation-delay: .1s; }
+body.anim .chk-tile:nth-child(2) { animation-delay: .05s; } body.anim .chk-tile:nth-child(3) { animation-delay: .1s; }
+body.anim .chk-tile:nth-child(4) { animation-delay: .15s; } body.anim .chk-tile:nth-child(5) { animation-delay: .2s; }
+body.anim .chk-tile:nth-child(6) { animation-delay: .25s; }
+.kpi-wh:hover { transform: translateY(-2px); }
+.lg-row i { transition: transform .2s var(--ease); } .lg-row:hover i { transform: scale(1.35); }
+/* charts: bars grow, the line draws, then points and labels pop in */
+body.anim .plan-chart .bar { animation-duration: .8s; }
+body.anim .plan-chart .bv, body.anim .plan-chart .lv, body.anim .plan-chart .dv { animation: fadeIn .4s ease both .75s; }
+body.anim .plan-chart .lnp, body.anim .plan-chart .dot { transform-box: fill-box; transform-origin: center; animation: popIn .45s var(--ease) both 1s; }
+.plan-chart .dot { transition: r .2s; }
+/* clicked Plan hour panel */
+.plan-hour:not([hidden]) { animation: fadeUp .4s var(--ease) both; }
+.plan-hour .tbl tbody tr { animation: rowIn .35s var(--ease) both; }
+/* live change: the number glows for a moment */
+.flash-up, .flash-dn { border-radius: 6px; animation: flashUp 1.6s ease-out; }
+.flash-dn { animation-name: flashDn; }
+@keyframes flashUp { 0% { background: rgba(245,158,11,.45); box-shadow: 0 0 0 4px rgba(245,158,11,.25); } 100% { background: transparent; box-shadow: 0 0 0 0 transparent; } }
+@keyframes flashDn { 0% { background: rgba(37,99,235,.3); box-shadow: 0 0 0 4px rgba(37,99,235,.18); } 100% { background: transparent; box-shadow: 0 0 0 0 transparent; } }
+#nav .cnt.flash-up, #nav .cnt.flash-dn { animation: cntBump .7s var(--ease); }
+@keyframes cntBump { 40% { transform: scale(1.35); } }

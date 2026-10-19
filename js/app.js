@@ -449,7 +449,7 @@ const calm = matchMedia('(prefers-reduced-motion: reduce)');
 let animT;
 function countUp(root) {
   let t0 = null; const items = [];
-  root.querySelectorAll('.kpi .val').forEach((el) => {
+  root.querySelectorAll('.kpi .val, .lg-v, .dn-c b, .tb-big, .tb-pct b, .chk-tile .cv').forEach((el) => {
     const n = el.firstChild;
     if (!n || n.nodeType !== 3) return;
     const m = n.nodeValue.match(/^([\d,]+)(.*)$/s);
@@ -481,7 +481,29 @@ function render(quiet = false) {
     document.body.classList.add('anim');
     clearTimeout(animT); animT = setTimeout(() => document.body.classList.remove('anim'), 1800);
   }
-  try { renderAll(); } finally { if (animate) countUp(document.querySelector(`.page[data-page="${S.page}"]`) || document.body); }
+  const before = snapNumbers();
+  try { renderAll(); } finally {
+    if (animate) countUp(document.querySelector(`.page[data-page="${S.page}"]`) || document.body);
+    else if (!calm.matches) flashChanges(before);
+  }
+}
+// live update: a number that changed since the last render (1-min tick / another device's upload) briefly glows
+// (went up = amber, went down = blue), so a TV screen shows what just moved
+const FLASH_SEL = '[data-k], #nav .cnt';
+function snapNumbers() {
+  const m = new Map();
+  $$(FLASH_SEL).forEach((el) => m.set(el.dataset.k || el.id, el.textContent));
+  return m;
+}
+function flashChanges(before) {
+  if (!before.size) return;
+  $$(FLASH_SEL).forEach((el) => {
+    const k = el.dataset.k || el.id, old = before.get(k);
+    if (old === undefined || old === el.textContent) return;
+    const a = parseFloat(String(old).replace(/,/g, '')), b = parseFloat(el.textContent.replace(/,/g, ''));
+    el.classList.remove('flash-up', 'flash-dn'); void el.offsetWidth; // restart the animation
+    el.classList.add(!isNaN(a) && !isNaN(b) && b < a ? 'flash-dn' : 'flash-up');
+  });
 }
 // banner when the data is old (an upload was forgotten): statuses like "เลยกำหนด" would be based on an old file.
 // Admins also see a reminder when the truck history for Est is still in the old format (rebuild once).
@@ -549,7 +571,7 @@ function donut(parts, size = 132, sw = 16) {
   let off = 0;
   const segs = tot ? parts.filter((p) => p.v).map((p) => {
     const len = (p.v / tot) * c, s = `<circle r="${r}" cx="${size / 2}" cy="${size / 2}" fill="none" stroke="${p.c}" stroke-width="${sw}"
-      stroke-dasharray="${Math.max(0, len - 2)} ${c}" stroke-dashoffset="${-off}" class="dn-seg"><title>${p.l} ${p.v}</title></circle>`;
+      stroke-dasharray="${Math.max(0, len - 2)} ${c}" stroke-dashoffset="${-off}" class="dn-seg" style="--d:${(off / c).toFixed(3)}"><title>${p.l} ${p.v}</title></circle>`;
     off += len; return s;
   }).join('') : '';
   return `<svg class="donut" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true">
@@ -565,12 +587,12 @@ function renderKpis(all, scope) {
     const pct = T ? Math.round((dn / T) * 100) : 0;
     const meta = S.data[wh].meta;
     const leg = (cls, lbl, v, det, st) => `<a href="#" class="lg-row ${cls}" data-st="${st}" data-wh="${wh}"><i></i><span class="lg-l">${lbl}</span>
-      <b class="lg-v">${v.toLocaleString()}</b><span class="lg-d">${det}</span></a>`;
+      <b class="lg-v" data-k="${wh}-${cls}">${v.toLocaleString()}</b><span class="lg-d">${det}</span></a>`;
     return `<div class="kpi-wh">
       <h3><span class="wh-name">${wh}</span><span class="muted">${meta ? 'อัปโหลด ' + fmtShow(new Date(meta.updatedAt)) : 'ยังไม่มีข้อมูล'}</span></h3>
       <div class="wh-body">
         <div class="dn-wrap">${donut([{ v: dn, c: '#10B981', l: 'ส่งแล้ว' }, { v: pe, c: '#2563EB', l: 'รอส่ง' }, { v: od, c: '#EF4444', l: 'เลยกำหนด' }])}
-          <div class="dn-c"><b>${pct}<small>%</small></b><span>ส่งแล้ว</span><span class="muted">${dn.toLocaleString()} / ${T.toLocaleString()}</span></div></div>
+          <div class="dn-c"><b data-k="${wh}-pct">${pct}<small>%</small></b><span>ส่งแล้ว</span><span class="muted">${dn.toLocaleString()} / ${T.toLocaleString()}</span></div></div>
         <div class="lg">
           ${leg('od', 'เลยกำหนด ยังไม่ส่ง', od, `${k.od.p.size} Pallet · ${k.od.r.size} Rack · ${k.od.b.toLocaleString()} กล่อง`, ST.OVERDUE)}
           ${leg('pe', 'รอส่ง', pe, `${k.pe.p.size} Pallet · ${k.pe.r.size} Rack · ${k.pe.b.toLocaleString()} กล่อง${k.so.size ? ` · <span class="c-soon">ใกล้ถึง Due ${k.so.size}</span>` : ''}`, ST.PENDING)}
@@ -601,10 +623,10 @@ function ovTruckBar(trips) {
     ['esc', `เลย Due เกิน ${escMin()} นาที`, esc, 'ESC'],
   ];
   const n = trips.length || 1, left = trips.filter((x) => x.left).length;
-  return `<div class="tb-head"><div><b class="tb-big">${trips.length}</b> คัน <span class="muted">ใช้ทั้งหมด (ตาม Shipping No.)</span></div>
-      <div class="tb-pct"><b>${Math.round((left / n) * 100)}%</b> ออกแล้ว <span class="muted">${left} / ${trips.length}</span></div></div>
+  return `<div class="tb-head"><div><b class="tb-big" data-k="tb-total">${trips.length}</b> คัน <span class="muted">ใช้ทั้งหมด (ตาม Shipping No.)</span></div>
+      <div class="tb-pct"><b data-k="tb-pct">${Math.round((left / n) * 100)}%</b> ออกแล้ว <span class="muted">${left} / ${trips.length}</span></div></div>
     <div class="tb-bar">${G.filter((g) => g[2].length).map(([c, l, a]) => `<span class="tb-${c}" style="flex:${a.length}" title="${l} ${a.length} คัน">${a.length}</span>`).join('')}</div>
-    <div class="tb-leg">${G.map(([c, l, a, f]) => `<a href="#" class="tb-chip${a.length ? '' : ' zero'}" data-tst="${f}"><i class="tb-${c}"></i>${l} <b>${a.length}</b></a>`).join('')}</div>`;
+    <div class="tb-leg">${G.map(([c, l, a, f]) => `<a href="#" class="tb-chip${a.length ? '' : ' zero'}" data-tst="${f}"><i class="tb-${c}"></i>${l} <b data-k="tb-${c}">${a.length}</b></a>`).join('')}</div>`;
 }
 // overview: small hourly chart (from the Plan page computation): bars = Plan trucks, line = trucks with a Shipping No.
 // (Due start in the hour), dots = trucks that left
@@ -1089,7 +1111,7 @@ function renderCheck(all, scope, trips) {
   if (S.page !== 'check') return;
   const open = S.checkOpen || (S.checkOpen = new Set(['noilms', 'behind']));
   $('#checkTiles').innerHTML = checks.map((c) => `<a href="#" class="chk-tile${c.count ? ' bad' : ''}" data-go="${c.id}">
-    <span class="ci">${c.icon}</span><span class="cv">${c.count.toLocaleString()} <small>${c.unit}</small></span><span class="cl">${esc(c.title)}</span></a>`).join('');
+    <span class="ci">${c.icon}</span><span class="cv" data-k="chk-${c.id}">${c.count.toLocaleString()} <small>${c.unit}</small></span><span class="cl">${esc(c.title)}</span></a>`).join('');
   $('#checkBody').innerHTML = checks.map((c) => {
     const cols = c.items.length ? Object.keys(c.items[0]).filter((k) => !k.startsWith('_')) : [];
     const shown = c.items.slice(0, 200);
