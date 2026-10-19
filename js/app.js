@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -1103,9 +1103,8 @@ function exportCheck() {
 }
 
 // ---------- KPI trend page: finished shifts of the last N days from the truck history (+ ILMS departures) ----------
-// on time = ILMS departure <= Due start (the truck history keeps each truck's earliest due used: field ds). Backlog rows
-// due before the truck's shift would make almost every truck "late" by days, so Due start is taken no earlier than the
-// shift start (as the Plan page does in ship-date mode). Trucks without an ILMS time are left out of the on-time %.
+// on time = ILMS departure <= Due start (the truck history keeps each truck's earliest due used: field ds); backlog due
+// more than 12 h before the shift start counts from the shift start (kpiDueStart). Trucks without ILMS are left out of the %.
 function kpiTrend(days, scope) {
   const now = new Date(), from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days + 1);
   const fromD = ymd(from).replace(/-/g, '');
@@ -1119,7 +1118,7 @@ function kpiTrend(days, scope) {
     if (!cells.has(key)) cells.set(key, { d: info.date, s: info.shift, n: 0, p: 0, r: 0, dep: 0, on: 0, late: 0, lateMin: 0, rs: new Map(), wh: new Set() });
     const c = cells.get(key);
     c.n++; c.p += t.p || 0; c.r += t.r || 0; c.wh.add(wh); all++;
-    const il = S.ilmsMap.get(sn), ds0 = t.ds ? fromKey(t.ds) : null, ds = ds0 && (ds0 < info.start ? info.start : ds0);
+    const il = S.ilmsMap.get(sn), ds = kpiDueStart(t.ds ? fromKey(t.ds) : null, info);
     if (!ds) noDs++;
     if (il && il.dt && ds) {
       c.dep++;

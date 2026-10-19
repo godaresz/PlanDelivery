@@ -458,6 +458,15 @@ export function allocateWhole(values) {
   return { total, out };
 }
 
+// KPI on-time: Due start used to judge a truck's departure. A due before the shift start counts as is (a truck due
+// 06:00 that leaves 07:29 is late), but backlog older than one shift (> 12 h before the shift start) would make the truck
+// "late" by days, so then the shift start is used instead (agreed 19/10/2026, option ค).
+export const KPI_BACKLOG_MS = 12 * 3600000;
+export function kpiDueStart(due, info) {
+  if (!due || !info) return due || null;
+  return info.start - due > KPI_BACKLOG_MS ? info.start : due;
+}
+
 // totals for a list of trucks
 export function tripTotals(list) {
   const left = list.filter((x) => x.left);

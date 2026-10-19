@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fromKey, fmtKey, timeFromText, isAllZero, parseWmsFile } from '../js/parse.js';
 import { evaluate, lockDues, isComplete, ST, parseTrip, byTrip, mergeWms, mergeIlms, allocateWhole, tripTotals,
-  truckSummaries, mergeTruckHist, setSoonMin } from '../js/logic.js';
+  truckSummaries, mergeTruckHist, setSoonMin, kpiDueStart } from '../js/logic.js';
 
 const D = (s) => fromKey(s);
 // a WMS row as stored (see parseWmsFile)
@@ -141,6 +141,15 @@ test('11. truck history keeps pallets/racks per Dock|Window and the earliest due
   assert.equal(h.p, 1); assert.equal(h.r, 1); assert.equal(h.s, 'D'); assert.equal(h.ds, '2026-10-15 08:30');
   const m = mergeTruckHist({ [sn]: { ...h, ds: '2026-10-15 08:00', p: 3 } }, { [sn]: h }, 365, D('2026-10-16 00:00'))[sn];
   assert.equal(m.p, 3); assert.equal(m.ds, '2026-10-15 08:00');
+});
+
+test('13. KPI due start: due before the shift counts as is, backlog older than 12 h counts from the shift start', () => {
+  const info = parseTrip('202610141D001'); // shift starts 14/10 07:30
+  assert.equal(fmtKey(kpiDueStart(D('2026-10-14 06:00'), info)), '2026-10-14 06:00'); // left 07:29 = late
+  assert.equal(fmtKey(kpiDueStart(D('2026-10-14 09:00'), info)), '2026-10-14 09:00');
+  assert.equal(fmtKey(kpiDueStart(D('2026-10-13 20:00'), info)), '2026-10-13 20:00'); // 11 h 30 m before: as is
+  assert.equal(fmtKey(kpiDueStart(D('2026-10-13 19:00'), info)), '2026-10-14 07:30'); // 12 h 30 m before: shift start
+  assert.equal(fmtKey(kpiDueStart(D('2026-10-10 15:30'), info)), '2026-10-14 07:30'); // days-old backlog
 });
 
 // ---------- CSV parsing (24-digit RFID stays text, 2nd Truck License column) ----------

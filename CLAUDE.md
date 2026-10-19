@@ -138,7 +138,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    unreadable Shipping No. · rows without a due. Nav badge = number of checks with findings; Excel export.
    **KPI trend page (`#kpi`)**: finished shifts of the last 7 / 30 / 90 days from `truckhist` (+ ILMS departures): trucks per
    day (D/N bars), on-time % line, table per shift, late reasons. On time = ILMS departure ≤ Due start, where Due start is
-   the truck's `ds` but no earlier than its shift start (old backlog rows would make nearly every truck "late" by days);
+   the truck's `ds`; only a `ds` more than 12 h before the shift start is replaced by the shift start (`kpiDueStart`, option ค
+   agreed 19/10/2026: old backlog would make the truck "late" by days, but due 06:00 / left 07:29 is still late);
    trucks without ILMS / ds are left out of the %. Plan page also shows running totals Plan vs left ("สะสม Plan / ออกจริง").
 14. **Overview dashboard** (19/10/2026): per WH a donut (shipped / pending / overdue pallets+racks, % shipped in the
    centre) with a clickable legend (→ detail page filtered) and a truck footer; truck status as one stacked bar (each truck in
