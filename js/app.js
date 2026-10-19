@@ -47,7 +47,7 @@ function dur(min) {
 const n0 = (v) => (v ? v : '<span class="z">0</span>');
 
 // ---------- time range ----------
-function setRange(kind) {
+function setRange(kind, silent = false) {
   const now = new Date();
   const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const at = (base, h, m, addDay = 0) => new Date(base.getFullYear(), base.getMonth(), base.getDate() + addDay, h, m);
@@ -63,11 +63,25 @@ function setRange(kind) {
     s = at(base, 7, 30); e = at(base, 7, 29, 1);
   }
   else { // auto: current shift
-    return setRange(mins >= 450 && mins < 1200 ? 'day' : 'night');
+    return setRange(mins >= 450 && mins < 1200 ? 'day' : 'night', silent);
   }
   $('#fStart').value = toInput(s); $('#fEnd').value = toInput(e);
   $$('.quick .chip[data-q]').forEach((c) => c.classList.toggle('on', c.dataset.q === kind));
-  saveFilters(); render();
+  saveFilters();
+  if (!silent) render();
+}
+// every data update (page open, upload, auto update, another device's upload) moves the view to the current day:
+// due mode keeps the chosen button (day / night / whole day) for today, a hand-typed range becomes the current shift;
+// ship-date mode moves to today's working day (before 07:30 = yesterday's date, still in its night shift)
+function rollToToday() {
+  if (S.mode === 'sn') {
+    const n = new Date();
+    if (n.getHours() * 60 + n.getMinutes() < 450) n.setDate(n.getDate() - 1);
+    S.snDate = ymd(n); drawMode(); saveFilters();
+    return;
+  }
+  const chip = $('.quick .chip[data-q].on');
+  setRange(chip ? chip.dataset.q : 'auto', true);
 }
 function saveFilters() {
   lsSet('sc_filters', JSON.stringify({ s: $('#fStart').value, e: $('#fEnd').value, b: $('#fBacklog').checked, wh: S.wh,
@@ -305,6 +319,7 @@ async function reload() {
     setSoonMin(S.rules.soonMin);
     S.hist = S.data.truckhist.data || { WH1: {}, WH4: {} };
     S.ilmsMap = new Map((S.data.ilms.data || []).map((r) => [r.tp, { ...r, dt: fromKey(r.dt) }]));
+    rollToToday();
     renderSources();
     render();
     renderArchive();
