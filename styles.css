@@ -449,3 +449,7 @@ code { font-family: 'IBM Plex Mono', monospace; font-size: 12px; background: #F3
 .auto-min input { width: 70px; }
 .past-tag { font-size: 12px; padding: 4px 10px; border-radius: 99px; background: #FEF3C7; color: #92400E; font-weight: 600; }
 .f-group .mode + .btn { margin-left: 4px; }
+.pill.loading { background: #EDE9FE; color: #5B21B6; }
+#btnNotify.on { background: #FEF3C7; color: #92400E; border-color: #F59E0B; }
+.c-on { color: #10B981; }
+#repRow { grid-template-columns: none; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

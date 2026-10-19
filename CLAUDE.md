@@ -75,7 +75,9 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 7. View filter: start/end datetime, end minute inclusive (shift buttons day 07:30–19:59 / night 20:00–07:29 / whole day = day + night 07:30–07:29 next day) + optional backlog of open rows due before start.
    Page open always rolls the view to today (`rollToToday`); later data updates roll it only while the user is looking at "now"
    (`viewingNow`: shift button on, typed range containing now, or today's ship date) — a deliberately chosen past day stays,
-   with a "กำลังดูข้อมูลย้อนหลัง" tag; button "📍 ดูวันปัจจุบัน" jumps back. Due mode re-applies the chosen shift button for today
+   with a "ไม่ใช่ช่วงปัจจุบัน" tag; button "📍 ดูวันปัจจุบัน" jumps back. Without new data the 1-minute tick (`followNow`) also moves
+   a view that was on "now" a minute earlier when its range ends (shift change 07:30 / 20:00: day/night button or typed range →
+   current shift, whole-day button → new working day; ship-date mode follows the working day and a chosen D/N shift). Due mode re-applies the chosen shift button for today
    (typed range → current shift); ship-date mode → today's working day (before 07:30 = yesterday).
    Second mode "วันที่ส่ง (Shipping No.)": pick a ship date + shift (ALL / D / N); shows only rows and trucks whose
    Shipping No. date/shift match (due is ignored; rows without a Shipping No. are hidden).
@@ -90,7 +92,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    or `Delivery Date` when that is blank (17/10/2026; row field `ds` = 'O' / 'D', truck tag "ILMS·DD" when Delivery Date was used;
    a COMPLETE-locked truck still takes a later file's Depart Origin once). Only WH1/WH4
    numbers kept; uploads merge by Truckplan No (newer wins unless the stored truck is `COMPLETE` = locked), never deleted.
-   Departure = ILMS time above if matched, else WMS (left once any row shipped). Late (ออกช้า) = departure after
+   Departure = ILMS time above if matched. Without ILMS (19/10/2026): a truck with shipped rows is "ขึ้นรถแล้ว · รอ ILMS"
+   (`loading`, not left) while its shift runs; after the shift ends WMS is the fallback (left at the last Shipping Time). Late (ออกช้า) = departure after
    Due start (ILMS) / a row shipped after its due (WMS fallback). Remaining = not left; overdue = Due start passed.
 11. **Truck estimate (Est, page `#est`)**: open (not shipped) pallets in the current filter. Each pallet counts once
    (bucket of its earliest due; Dock|Window, Part No., Supplier of its first row). Buckets = due day × period ตี 00–05 /
@@ -118,7 +121,13 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Due start is in the hour (Shipping No., value labels on the chart line; table also shows pallets+racks that already have a Shipping No.) and trucks that left in the hour (ILMS/WMS departure, even outside the range).
    Backlog rows due before the start go to one "ค้างก่อนช่วง" row.
 
-13. **Other features**: stale-data banner (WMS / ILMS upload older than `rules.staleWmsMin` / `rules.staleIlmsMin` minutes, default 30 each;
+13. **Other features**: data cards show file time (`meta.fileAt` = file.lastModified) + upload time ·
+   browser alerts per device (🔔 button, localStorage `sc_notify`): Notification + beep when a truck newly becomes "soon" or
+   overdue, only while viewing now; what is on screen at open / WH or mode change is not alerted (`notifyCheck`) ·
+   shift report (data page, per PC, no login): Excel `ShiftReport_<YYYYMMDD><D|N>.xlsx` (sheets สรุปกะ / รถ / ค้างส่ง) written to
+   a chosen folder (IndexedDB `dir_report`, localStorage `sc_rep_on` / `sc_rep_last`) 15 min after each shift end
+   (within 12 h), or downloaded with the button when no folder is chosen ·
+stale-data banner (WMS / ILMS upload older than `rules.staleWmsMin` / `rules.staleIlmsMin` minutes, default 30 each;
    admins also get a reminder while `truckhist` is still v1) · Excel export on Plan (hourly + by Dock group) and Est pages ·
    Plan "แยกตามกลุ่ม Dock" table (group × hour, whole trucks from the same allocation) · Est accuracy history
    (button; back-test of the last 30 days of finished shifts from `truckhist`, each day learning only from earlier days,

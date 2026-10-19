@@ -181,8 +181,12 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
       x.late = x.left && x.lateMin > 0;
       if (il.tr) x.trucks = new Set([il.tr]); // ILMS licence is the real plate; WMS may hold a code
     } else {
-      x.src = x.done ? 'WMS' : '';
-      x.left = x.done > 0;
+      // no ILMS: pallets scanned onto the truck do not mean it left. While its shift is running it is "loaded,
+      // waiting for ILMS"; once the shift is over WMS is the fallback (left at the last Shipping Time).
+      const shiftOver = !x.info || now >= x.info.end;
+      x.loading = x.done > 0 && !shiftOver;
+      x.src = x.done && shiftOver ? 'WMS' : '';
+      x.left = x.done > 0 && shiftOver;
       x.dep = x.left ? x.wmsLast : null;
       x.late = x.left && x.lateRows > 0;
       x.lateMin = x.late ? x.maxLate : null;
@@ -451,7 +455,8 @@ export function allocateWhole(values) {
 export function tripTotals(list) {
   const left = list.filter((x) => x.left);
   return { used: list.length, left: left.length, remain: list.length - left.length,
-    late: left.filter((x) => x.late).length, od: list.filter((x) => x.od).length, soon: list.filter((x) => x.soon).length };
+    late: left.filter((x) => x.late).length, od: list.filter((x) => x.od).length, soon: list.filter((x) => x.soon).length,
+    loading: list.filter((x) => x.loading).length };
 }
 
 // day a row belongs to in the archive: shipping day, else due day ("YYYY-MM-DD")

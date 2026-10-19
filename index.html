@@ -21,6 +21,7 @@
     <div class="top-right">
       <span id="clock" class="clock"></span>
       <span id="modeBadge" class="badge"></span>
+      <button id="btnNotify" class="btn ghost" title="แจ้งเตือน + เสียง ในเครื่องนี้ เมื่อมีรถใกล้ถึง Due หรือเลย Due ยังไม่ออก (ต้องเปิดหน้าเว็บค้างไว้)">🔕 แจ้งเตือน</button>
       <button id="btnTv" class="btn ghost" title="โหมดจอใหญ่ สำหรับเปิดค้างไว้หน้า Dock (เปลี่ยนหน้าอัตโนมัติ)">📺 จอใหญ่</button>
       <button id="btnLogin" class="btn ghost">เข้าสู่ระบบ</button>
     </div>
@@ -50,7 +51,7 @@
           </div>
         </div>
         <button class="btn sm" id="btnNow" title="กลับไปดูกะ / วันปัจจุบัน">📍 ดูวันปัจจุบัน</button>
-        <span id="pastTag" class="past-tag" hidden>กำลังดูข้อมูลย้อนหลัง — ข้อมูลอัปเดตจะไม่เลื่อนหน้าจอ</span>
+        <span id="pastTag" class="past-tag" hidden>ไม่ใช่ช่วงปัจจุบัน (ดูย้อนหลัง / ล่วงหน้า) — ข้อมูลอัปเดตจะไม่เลื่อนหน้าจอ</span>
       </div>
       <div class="f-group" id="fgSn" hidden>
         <label>วันที่ส่ง<span class="dt-wrap"><span class="dt-show"></span><input type="date" id="fSnDate"></span></label>
@@ -231,6 +232,12 @@
           <label class="inline auto-min">รอบการตรวจ ทุก <input type="number" id="autoMin" min="5" max="240" step="5" value="15"> นาที</label>
           <span class="hint" id="autoStatus"></span>
         </div>
+      </section>
+      <section class="panel" id="repPanel">
+        <div class="panel-h"><h2>รายงานสิ้นกะ (Excel)</h2></div>
+        <p class="hint">บันทึกไฟล์สรุปกะ (สรุปต่อ WH · รายการรถ · งานค้างส่ง) ลงโฟลเดอร์ที่เลือก อัตโนมัติ 15 นาทีหลังจบกะ (07:30 / 20:00) ·
+          ตั้งค่าแยกแต่ละเครื่อง · ต้องเปิดหน้าเว็บค้างไว้ในเครื่องนั้น · ไม่ต้อง login</p>
+        <div class="auto-row" id="repRow"></div>
       </section>
       <section class="panel" id="archPanel">
         <div class="panel-h"><h2>ส่งออกและล้างข้อมูลเก่า (ทุก 3 เดือน)</h2></div>

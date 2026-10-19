@@ -77,7 +77,8 @@ function setRange(kind, silent = false) {
 function workDay() { const n = new Date(); if (n.getHours() * 60 + n.getMinutes() < 450) n.setDate(n.getDate() - 1); return ymd(n); }
 function viewingNow() {
   if (S.mode === 'sn') return S.snDate === workDay() || S.snDate === ymd(new Date());
-  if ($('.quick .chip[data-q].on')) return true; // shift buttons always set today's range (re-applied for the new day)
+  const chip = $('.quick .chip[data-q].on');
+  if (chip && chip.dataset.q === 'today') return true; // whole working day: re-applied for the new day
   const s = fromInput($('#fStart').value), e = fromInput($('#fEnd').value), now = new Date();
   return !!s && !!e && s <= now && now < new Date(e.getTime() + 60000);
 }
@@ -346,15 +347,17 @@ async function reload() {
 }
 
 function renderSources() {
+  // file time (when the export wrote it) next to the upload time, so it is clear how fresh the data is
+  const when = (meta) => (meta.fileAt ? `ไฟล์ ${fmtShowFull(new Date(meta.fileAt))} · ` : '') + `อัปโหลด ${fmtShowFull(new Date(meta.updatedAt))}`;
   const m = (meta, extra) => (meta
-    ? `${esc(meta.fileName || '')}<br>อัปเดต ${fmtShowFull(new Date(meta.updatedAt))} · ${extra}`
+    ? `${esc(meta.fileName || '')}<br>${when(meta)} · ${extra}`
     : 'ยังไม่มีข้อมูล');
   const sl = S.data.slide.meta;
   $('#srcSlide .src-meta').innerHTML = m(sl, sl ? `${esc(Number(sl.count).toLocaleString())} Order (มีวันเวลาใหม่ ${esc(Number(sl.valid).toLocaleString())})` : '');
   $('#srcSlide').classList.toggle('ok', !!sl);
   $('#srcWMS .src-meta').innerHTML = WHS.map((wh) => {
     const mt = S.data[wh].meta;
-    return `<b>${wh}</b> ` + (mt ? `${esc(mt.fileName || '')}<br>อัปเดต ${fmtShowFull(new Date(mt.updatedAt))} · ${esc(Number(mt.count).toLocaleString())} แถว`
+    return `<b>${wh}</b> ` + (mt ? `${esc(mt.fileName || '')}<br>${when(mt)} · ${esc(Number(mt.count).toLocaleString())} แถว`
       + (mt.kept ? ` (เก็บที่ส่งแล้วจากรอบก่อน ${esc(mt.kept)})` : '') : 'ยังไม่มีข้อมูล');
   }).join('<br>');
   $('#srcWMS').classList.toggle('ok', WHS.some((wh) => !!S.data[wh].meta));
@@ -504,6 +507,7 @@ function renderAll() {
   const trips = tripsInView(scope, rows);
   renderWindows(rows, trips);
   renderTrips(trips, rows);
+  notifyCheck(trips);
   renderOverview(rows, trips);
   const estTotal = renderEst(all, scope);
   renderPlan(all, scope, trips); // also keeps the nav badge current on other pages
@@ -618,6 +622,7 @@ function lateCell(x) {
 function tripStatus(x) {
   if (x.left) return x.late ? `<span class="pill done_late${x.lateMin >= 15 ? ' big' : ''}">ออกแล้ว · ช้า</span>`
     : '<span class="pill done_on">ออกแล้ว · ตรงเวลา</span>';
+  if (x.loading) return `<span class="pill ${x.od ? 'overdue' : 'loading'}">ขึ้นรถแล้ว · รอ ILMS${x.od ? ' · เลย Due' : ''}</span>`;
   if (x.od) return '<span class="pill overdue">ยังไม่ออก · เลยกำหนด</span>';
   return x.soon ? `<span class="pill soon">ยังไม่ออก · อีก ${x.soonMin} นาทีถึง Due</span>` : '<span class="pill pending">ยังไม่ออก</span>';
 }
@@ -627,12 +632,13 @@ function truckTiles(T) {
     tile('trip', 'ใช้รถทั้งหมด', T.used, 'ตาม Shipping No.'),
     tile('done', 'ส่งแล้ว (ออกแล้ว)', T.left, `ตรงเวลา ${T.left - T.late} · ช้า ${T.late}`),
     tile('pending', 'เหลือ (ยังไม่ออก)', T.remain, [T.od ? `<span class="c-late">เลยกำหนดแล้ว ${T.od} คัน</span>` : '',
-      T.soon ? `<span class="c-soon">ใกล้ถึง Due ≤ ${SOON_MIN} นาที ${T.soon} คัน</span>` : ''].filter(Boolean).join(' · ') || 'ยังไม่ถึงกำหนด'),
+      T.soon ? `<span class="c-soon">ใกล้ถึง Due ≤ ${SOON_MIN} นาที ${T.soon} คัน</span>` : '',
+      T.loading ? `ขึ้นรถแล้ว รอ ILMS ${T.loading} คัน` : ''].filter(Boolean).join(' · ') || 'ยังไม่ถึงกำหนด'),
     tile('overdue', 'ออกช้า', T.late, T.left ? `${Math.round((T.late / T.left) * 100)}% ของที่ออกแล้ว` : ''),
   ].join('');
 }
-const TRUCK_CHIPS = [['ALL', 'ทั้งหมด'], ['LEFT', 'ออกแล้ว'], ['LATE', 'ออกช้า'], ['REMAIN', 'ยังไม่ออก'], ['SOON', 'ใกล้ถึง Due'], ['OD', 'ยังไม่ออก · เลยกำหนด']];
-const truckFilter = { ALL: () => true, LEFT: (x) => x.left, LATE: (x) => x.late, REMAIN: (x) => !x.left, SOON: (x) => x.soon, OD: (x) => x.od };
+const TRUCK_CHIPS = [['ALL', 'ทั้งหมด'], ['LEFT', 'ออกแล้ว'], ['LATE', 'ออกช้า'], ['REMAIN', 'ยังไม่ออก'], ['SOON', 'ใกล้ถึง Due'], ['LOADING', 'ขึ้นรถแล้ว · รอ ILMS'], ['OD', 'ยังไม่ออก · เลยกำหนด']];
+const truckFilter = { ALL: () => true, LEFT: (x) => x.left, LATE: (x) => x.late, REMAIN: (x) => !x.left, SOON: (x) => x.soon, LOADING: (x) => x.loading, OD: (x) => x.od };
 
 function renderTrips(list, rows) {
   const showWh = S.wh === 'ALL';
@@ -696,7 +702,8 @@ function renderTrips(list, rows) {
       <td class="n">${n0(x.p.size)} / ${n0(x.r.size)}</td><td class="n">${x.box.toLocaleString()}</td>
       <td class="t">${dueRange(x.dueStart, x.dueEnd)}</td>
       <td class="t">${x.dep && x.left ? `${fmtShow(x.dep)} <span class="src-tag ${x.src === 'ILMS' ? 'ilms' : ''}" title="${x.src === 'ILMS' ? (x.ilms && x.ilms.ds === 'O' ? 'ILMS: Actual Time Depart Origin' : 'ILMS: Delivery Date (ยังไม่มี Actual Time Depart Origin)') : 'WMS: เวลา Shipping ล่าสุด'}">${x.src === 'ILMS' && x.ilms && x.ilms.ds === 'D' ? 'ILMS·DD' : x.src}</span>`
-        : x.dep ? `<span class="hint">กำหนด ${fmtShow(x.dep)}</span>` : '<span class="z">-</span>'}</td>
+        : x.dep ? `<span class="hint">กำหนด ${fmtShow(x.dep)}</span>`
+        : x.loading && x.wmsLast ? `<span class="hint">ยิงขึ้นรถล่าสุด ${fmtShow(x.wmsLast)}</span>` : '<span class="z">-</span>'}</td>
       <td class="n">${lateCell(x)}</td><td>${tripStatus(x)}</td></tr>`).join('')
       || `<tr><td colspan="${cols}" class="hint">${anySn || !rows.length ? 'ไม่มีรถในช่วงเวลานี้'
         : 'ไฟล์ WMS ที่อัปโหลดไว้ยังไม่มีคอลัมน์ Shipping No. (AC) — อัปโหลดไฟล์ใหม่'}</td></tr>`}</tbody>`;
@@ -1250,7 +1257,7 @@ async function uploadFile(kind, file, auto = false) {
     if (!res.rows.length) throw new Error('ไม่พบ Truckplan No ของ WH1 / WH4 ในไฟล์');
     const latest = await store.loadAll();
     const m = mergeIlms((latest.ilms && latest.ilms.data) || [], res.rows);
-    await store.saveIlms(m.rows, { fileName: file.name, count: m.rows.length, fromFile: res.rows.length });
+    await store.saveIlms(m.rows, { fileName: file.name, fileAt: file.lastModified || null, count: m.rows.length, fromFile: res.rows.length });
     toast(`อัปเดต ILMS แล้ว: ${res.rows.length.toLocaleString()} คันจากไฟล์ (WH1/WH4)` + (res.other ? ` · ข้ามคลังอื่น ${res.other}` : '')
       + (m.skipped ? ` · ข้ามที่ COMPLETE แล้ว ${m.skipped.toLocaleString()}` : '')
       + ` · รวมเก็บไว้ ${m.rows.length.toLocaleString()} คัน`, false, 8000);
@@ -1259,7 +1266,7 @@ async function uploadFile(kind, file, auto = false) {
     const res = await parseSlideFile(file);
     await lockConfirmedDues(); // confirmed rows keep the due they were confirmed with (stamped with the old slide)
     await store.saveSlide({ orders: res.orders, dues: res.dues },
-      { fileName: file.name, count: res.orders.length, valid: res.validCount });
+      { fileName: file.name, fileAt: file.lastModified || null, count: res.orders.length, valid: res.validCount });
     toast(`อัปเดต DataSlide แล้ว: ${res.orders.length.toLocaleString()} Order (ล้างข้อมูลเดิมแล้ว)`);
   } else {
     toast('กำลังอ่านไฟล์ WMS…', false, 60000);
@@ -1305,7 +1312,7 @@ async function uploadFile(kind, file, auto = false) {
       hist[wh] = mergeTruckHist(hist[wh] || {}, truckAccDone(acc));
       const ln = truckAccLinks(acc), old = (hist.links && hist.links[wh]) || { parts: {}, sups: {} };
       hist.links = { ...(hist.links || {}), [wh]: { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } } };
-      await store.saveWms(wh, m.rows, { fileName: file.name, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped });
+      await store.saveWms(wh, m.rows, { fileName: file.name, fileAt: file.lastModified || null, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped });
       msgs.push(`${wh} ${split[wh].length.toLocaleString()} แถว` + (m.skipped ? ` · ข้ามที่ Confirm แล้ว ${m.skipped.toLocaleString()}` : '')
         + (m.kept ? ` · เก็บที่ส่งแล้วจากรอบก่อน ${m.kept.toLocaleString()}` : '')
         + (m.dropped ? ` · ไม่มีในไฟล์ใหม่ (ยังไม่ Confirm) เอาออก ${m.dropped.toLocaleString()}` : '')
@@ -1528,6 +1535,7 @@ function bind() {
     drawAuto();
     toast(`ตั้งรอบตรวจเป็นทุก ${m} นาทีแล้ว (เฉพาะเครื่องนี้)`);
   });
+  $('#btnNotify').addEventListener('click', toggleNotif);
   $('#btnTv').addEventListener('click', () => (tv.on ? tvStop() : tvStart()));
   $('#tvExit').addEventListener('click', tvStop);
   $('#tvPause').addEventListener('click', () => { tv.paused = !tv.paused; tvDraw(); });
@@ -1653,6 +1661,188 @@ function tvDraw() {
   $('#tvPause').textContent = tv.paused ? '▶ เล่นต่อ' : '⏸ หยุด';
 }
 
+// ---------- follow "now" between data updates: at the shift change (07:30 / 20:00) the view moves on by itself ----------
+// only when the user was looking at now a minute ago; a deliberately chosen past day / upcoming shift stays.
+const shiftNow = () => { const n = new Date(), m = n.getHours() * 60 + n.getMinutes(); return m >= 450 && m < 1200 ? 'D' : 'N'; };
+let follow = { now: null, wd: '', sh: '' };
+function followNow() {
+  const wd = workDay(), sh = shiftNow();
+  if (follow.now) {
+    if (S.mode === 'sn') {
+      if (wd !== follow.wd && S.snDate === follow.wd) S.snDate = wd;
+      if (sh !== follow.sh && S.snShift === follow.sh) S.snShift = sh; // D/N chosen = keep following the running shift
+      drawMode(); saveFilters();
+    } else {
+      const chip = $('.quick .chip[data-q].on');
+      const e = fromInput($('#fEnd').value), ended = !!e && Date.now() >= e.getTime() + 60000;
+      if (chip && chip.dataset.q === 'today') { if (ended) setRange('today', true); }
+      else if (ended) setRange('auto', true); // day / night button or a typed range that just ended -> current shift
+    }
+  }
+  follow = { now: viewingNow(), wd, sh };
+}
+function minuteTick() {
+  followNow();
+  render(true); // statuses move from pending to overdue as time passes
+  repCheck(); drawRep(); // label of the last ended shift moves on
+}
+
+// ---------- browser alerts (per device, e.g. the TV / auto-upload PC): new "soon" or overdue trucks ----------
+const notif = { seen: null, scope: '' };
+const notifOn = () => lsGet('sc_notify') === '1';
+function drawNotif() {
+  const b = $('#btnNotify');
+  b.textContent = notifOn() ? '🔔 แจ้งเตือน: เปิด' : '🔕 แจ้งเตือน';
+  b.classList.toggle('on', notifOn());
+}
+async function toggleNotif() {
+  if (notifOn()) { lsSet('sc_notify', '0'); drawNotif(); toast('ปิดแจ้งเตือนในเครื่องนี้แล้ว'); return; }
+  if (!('Notification' in window)) { toast('เบราว์เซอร์นี้ไม่รองรับการแจ้งเตือน', true); return; }
+  let p = Notification.permission;
+  if (p !== 'granted') p = await Notification.requestPermission();
+  if (p !== 'granted') { toast('ไม่ได้รับอนุญาตให้แจ้งเตือน — อนุญาตได้ที่ไอคอนแม่กุญแจหน้าช่อง URL', true, 8000); return; }
+  lsSet('sc_notify', '1'); notif.seen = null; drawNotif(); beep();
+  toast(`เปิดแจ้งเตือนในเครื่องนี้แล้ว: รถใกล้ถึง Due (≤ ${SOON_MIN} นาที) และรถเลย Due ที่ยังไม่ออก — ต้องเปิดหน้าเว็บค้างไว้`, false, 8000);
+}
+function beep() {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    for (const t of [0, 0.3]) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
+      g.gain.setValueAtTime(0.25, ac.currentTime + t); g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + t + 0.25);
+      o.start(ac.currentTime + t); o.stop(ac.currentTime + t + 0.25);
+    }
+    setTimeout(() => ac.close(), 1200);
+  } catch { /* no sound */ }
+}
+// alert once per truck and state; what is already on screen when the page opens (or the WH / mode changes) is not alerted
+function notifyCheck(trips) {
+  if (!notifOn() || !viewingNow() || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const cur = new Map();
+  for (const x of trips) if (x.od) cur.set(x.sn + '|od', x); else if (x.soon) cur.set(x.sn + '|soon', x);
+  const scope = `${S.wh}|${S.mode}|${S.search}`;
+  if (!notif.seen || notif.scope !== scope) { notif.seen = new Set(cur.keys()); notif.scope = scope; return; }
+  const fresh = [...cur].filter(([k]) => !notif.seen.has(k)).map(([k, x]) => [k.endsWith('|od'), x]);
+  notif.seen = new Set(cur.keys());
+  if (!fresh.length) return;
+  const od = fresh.filter(([o]) => o).map(([, x]) => x), so = fresh.filter(([o]) => !o).map(([, x]) => x);
+  const list = (a, f) => a.slice(0, 5).map(f).join(', ') + (a.length > 5 ? ' …' : '');
+  const body = [od.length ? `เลย Due ยังไม่ออก ${od.length} คัน: ${list(od, (x) => x.sn)}` : '',
+    so.length ? `อีก ≤ ${SOON_MIN} นาทีถึง Due ${so.length} คัน: ${list(so, (x) => `${x.sn} (${x.soonMin} น.)`)}` : ''].filter(Boolean).join('\n');
+  try {
+    const n = new Notification(od.length ? '⚠ รถเลย Due ยังไม่ออก' : '⏰ รถใกล้ถึง Due', { body, tag: 'sc-trucks', renotify: true, requireInteraction: od.length > 0 });
+    n.onclick = () => { window.focus(); go('trucks'); n.close(); };
+  } catch { /* ignore */ }
+  beep();
+}
+
+// ---------- shift report (per PC): an Excel summary saved to a chosen folder after each shift ----------
+const REP_DELAY = 15; // minutes after the shift end, so the last uploads of the shift are in
+const rep = { h: null, msg: '', busy: false };
+// the shift that ended most recently (D = 07:30–20:00, N = 20:00–07:30 next day)
+function lastEndedShift(now = new Date()) {
+  const at = (dd, h, m) => new Date(now.getFullYear(), now.getMonth(), now.getDate() + dd, h, m);
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const sh = mins >= 1200 ? { shift: 'D', start: at(0, 7, 30), end: at(0, 20, 0) }
+    : mins >= 450 ? { shift: 'N', start: at(-1, 20, 0), end: at(0, 7, 30) }
+      : { shift: 'D', start: at(-1, 7, 30), end: at(-1, 20, 0) };
+  sh.key = ymd(sh.start).replace(/-/g, '') + sh.shift;
+  sh.label = `${ymd(sh.start)} กะ${sh.shift === 'D' ? 'เช้า (D) 07:30–19:59' : 'ดึก (N) 20:00–07:29'}`;
+  return sh;
+}
+function shiftReportBook(sh) {
+  const now = new Date(), days = [ymd(sh.start), ymd(sh.end)];
+  const ev = WHS.flatMap((wh) => {
+    const active = (S.data && S.data[wh].data) || [], have = new Set(active.map((r) => r.k));
+    const rows = active.concat(days.flatMap((d) => (S.arch.get(`${wh}|${d}`) || []).filter((r) => !have.has(r.k))));
+    return evaluate(rows, S.slideMap, S.rules.groups || [], now).map((r) => ({ ...r, wh }));
+  });
+  const trips = byTrip(ev, S.ilmsMap, now).filter((x) => x.info && x.info.start.getTime() === sh.start.getTime());
+  const due = ev.filter((r) => r.due && r.due >= sh.start && r.due < sh.end);
+  const units = (rs) => new Set(rs.map((r) => r.pl || r.k)).size;
+  const f = (d) => (d ? fmtShowFull(d) : '');
+  const summary = WHS.map((wh) => {
+    const t = trips.filter((x) => x.whOwn === wh), left = t.filter((x) => x.left), late = left.filter((x) => x.late);
+    const d = due.filter((r) => r.wh === wh), open = d.filter((r) => !r.done);
+    return { 'กะ': sh.label, WH: wh, 'รถ (คัน)': t.length, 'ออกแล้ว': left.length, 'ออกช้า': late.length,
+      'ออกตรงเวลา %': left.length ? +((100 * (left.length - late.length)) / left.length).toFixed(1) : '',
+      'ยังไม่ออก': t.length - left.length, 'Pallet+Rack Due ในกะ': units(d), 'ส่งแล้ว': units(d.filter((r) => r.done)),
+      'ส่งช้า': units(d.filter((r) => r.st === ST.DONE_LATE)), 'ค้างส่ง': units(open),
+      'กล่องค้าง': open.reduce((a, r) => a + (r.bx || 0), 0), 'สร้างรายงาน': f(now) };
+  });
+  const truckRows = trips.map((x) => ({ 'Shipping No.': x.sn, WH: x.whOwn, Dock: [...x.docks].sort().join(', '),
+    'Window Name': [...x.wins].sort().join(', '), 'ทะเบียน': [...x.trucks].join(', '), Pallet: x.p.size, Rack: x.r.size, 'กล่อง': x.box,
+    'Due เริ่ม': f(x.dueStart), 'Due สุดท้าย': f(x.dueEnd), 'ออกจริง': f(x.dep), 'แหล่งเวลาออก': x.src,
+    'สถานะ': x.left ? (x.late ? 'ออกช้า' : 'ตรงเวลา') : x.loading ? 'ขึ้นรถแล้ว · รอ ILMS' : x.od ? 'เลย Due ยังไม่ออก' : 'ยังไม่ออก',
+    'ช้า (นาที)': x.late ? x.lateMin : '' }));
+  const openRows = due.filter((r) => !r.done).map((r) => ({ WH: r.wh, 'Order No.': r.o, Supplier: r.s, 'Part No.': r.p, Dock: r.d,
+    'Window Name': r.w, 'Pallet No.': r.pl, 'ประเภท': r.rk ? 'Rack' : 'Pallet', 'Due ที่ใช้': f(r.due),
+    'สถานะ': r.st === ST.OVERDUE ? 'เลยกำหนด' : r.sh ? 'ยิงแล้ว ยังไม่ขึ้นรถ' : 'รอส่ง', 'Shipping No.': r.sn || '', 'กล่อง': r.bx }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), 'สรุปกะ');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(truckRows.length ? truckRows : [{ 'Shipping No.': 'ไม่มีรถในกะนี้' }]), 'รถ');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(openRows.length ? openRows : [{ WH: 'ไม่มีงานค้าง' }]), 'ค้างส่ง');
+  return wb;
+}
+const repName = (sh) => `ShiftReport_${sh.key}.xlsx`;
+async function repPerm(ask) {
+  if (!rep.h) return false;
+  let p = await rep.h.queryPermission({ mode: 'readwrite' });
+  if (p !== 'granted' && ask) p = await rep.h.requestPermission({ mode: 'readwrite' });
+  return p === 'granted';
+}
+async function repSave(sh, ask) {
+  if (rep.busy || !S.data) return;
+  rep.busy = true;
+  try {
+    const wb = shiftReportBook(sh);
+    if (!rep.h) { XLSX.writeFile(wb, repName(sh)); rep.msg = `ดาวน์โหลด ${repName(sh)} แล้ว`; return; }
+    if (!(await repPerm(ask))) { rep.msg = 'ยังไม่ได้รับอนุญาตให้เขียนโฟลเดอร์ — กด "บันทึกรายงานกะล่าสุด" 1 ครั้ง'; return; }
+    const fh = await rep.h.getFileHandle(repName(sh), { create: true });
+    const w = await fh.createWritable();
+    await w.write(new Uint8Array(XLSX.write(wb, { bookType: 'xlsx', type: 'array' }))); await w.close();
+    lsSet('sc_rep_last', sh.key);
+    rep.msg = `บันทึก ${repName(sh)} แล้ว (${fmtShow(new Date())})`;
+  } catch (e) {
+    console.error(e); rep.msg = 'บันทึกรายงานไม่สำเร็จ: ' + e.message; toast(rep.msg, true, 9000);
+  } finally { rep.busy = false; drawRep(); }
+}
+// every minute: once a shift has ended (+ REP_DELAY min), write its report once (only within 12 h of the end)
+function repCheck() {
+  if (lsGet('sc_rep_on') !== '1' || !rep.h || !S.data) return;
+  const sh = lastEndedShift(), since = (Date.now() - sh.end.getTime()) / 60000;
+  if (since < REP_DELAY || since > 720 || lsGet('sc_rep_last') === sh.key) return;
+  repSave(sh, false);
+}
+async function repInit() {
+  if ('showDirectoryPicker' in window) rep.h = await kvGet('dir_report');
+  drawRep();
+}
+async function repPick() {
+  try {
+    rep.h = await window.showDirectoryPicker({ id: 'sc-report', mode: 'readwrite' });
+    await kvSet('dir_report', rep.h); rep.msg = 'เลือกโฟลเดอร์แล้ว'; drawRep();
+  } catch (e) { if (e.name !== 'AbortError') toast('เลือกโฟลเดอร์ไม่สำเร็จ: ' + e.message, true); }
+}
+function drawRep() {
+  const el = $('#repRow');
+  if (!el) return;
+  const on = lsGet('sc_rep_on') === '1', fs = 'showDirectoryPicker' in window, sh = lastEndedShift();
+  el.innerHTML = `<span class="auto-path">${rep.h ? `📁 ${esc(rep.h.name)}` : `<span class="hint">${fs ? 'ยังไม่ได้เลือกโฟลเดอร์ (กดบันทึก = ดาวน์โหลดไฟล์)' : 'เบราว์เซอร์นี้เลือกโฟลเดอร์ไม่ได้ — กดบันทึก = ดาวน์โหลดไฟล์'}</span>`}</span>
+    ${fs ? `<button class="btn sm" id="btnRepPick">${rep.h ? 'เปลี่ยนโฟลเดอร์' : 'เลือกโฟลเดอร์'}</button>` : ''}
+    <button class="btn sm ${on ? '' : 'primary'}" id="btnRepToggle" ${rep.h ? '' : 'disabled'}>${on ? '■ หยุดบันทึกอัตโนมัติ' : '▶ บันทึกอัตโนมัติทุกสิ้นกะ'}</button>
+    <button class="btn sm" id="btnRepNow">บันทึกรายงานกะล่าสุด (${esc(sh.label)})</button>
+    <span class="auto-last">${on ? `<b class="c-on">เปิดอยู่</b> · ` : ''}ล่าสุด: ${esc(lsGet('sc_rep_last') || '-')}${rep.msg ? `<div class="hint">${esc(rep.msg)}</div>` : ''}</span>`;
+  if (fs) $('#btnRepPick').addEventListener('click', repPick);
+  $('#btnRepToggle').addEventListener('click', async () => {
+    if (on) { lsSet('sc_rep_on', '0'); drawRep(); return; }
+    if (!(await repPerm(true))) { toast('ยังไม่ได้รับอนุญาตให้เขียนโฟลเดอร์', true); return; }
+    lsSet('sc_rep_on', '1'); drawRep(); repCheck();
+  });
+  $('#btnRepNow').addEventListener('click', () => repSave(lastEndedShift(), true));
+}
+
 function tick() {
   const n = new Date();
   $('#clock').textContent = fmtShowFull(n);
@@ -1666,7 +1856,8 @@ async function main() {
   $('#modeBadge').textContent = store.isDemo ? 'โหมดทดลอง (เก็บในเครื่องนี้)' : 'Firebase';
   $('#modeBadge').classList.toggle('demo', store.isDemo);
   tick(); setInterval(tick, 1000);
-  setInterval(() => render(true), 60000); // statuses move from pending to overdue as time passes
+  setInterval(minuteTick, 60000); // statuses move as time passes, the view follows the shift change, shift report
+  drawNotif(); repInit();
   await store.init();
   store.onAuth((u) => {
     S.user = u;
