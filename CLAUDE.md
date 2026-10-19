@@ -47,6 +47,10 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    - Order NOT in DataSlide → Dock rule if Dock is in a group and WMS due time equals the rule's original time
      (slide time earlier than original = next day); otherwise WMS due.
    - Default Dock rules: S0,S2,S7,S9: 07:30→08:30, 08:30→09:30 · S5,S6: 07:30→09:30, 08:30→10:30 (editable in the app).
+   - **Window rule** (agreed 19/10/2026, `{type:'window', windows, time}`): Window Name **1D28 → Due 15:30 of the day of its
+     Shipping No.** (no truck yet → the WMS Due Date's day). Order in DataSlide still uses DataSlide; checked before the Dock
+     rules (source "Window"). Editable in the rules dialog ("+ เพิ่มกำหนดเวลาตาม Window"). Saved rules without `winInit` get the
+     default 1D28 rule merged in (`withRuleDefaults`) until the rules are saved once.
    - **CONFIRMED rows keep the due they were confirmed with** (agreed 15/10/2026): `lockDues` stamps `du` (+ `dsrc`) on a
      CONFIRMED row once — at the WMS upload that brings it, and for all unstamped confirmed rows just before a new
      DataSlide upload or a Dock-rule save (stamped with the OLD slide/rules). `evaluate` uses `du` when present (source

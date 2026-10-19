@@ -12,13 +12,27 @@ export const isComplete = (r) => r.cf === 1 || (!!r.sh && truckOk(r.tr));
 // rules: [{ docks: ['S0','S2'], map: [{ orig: '07:30', slide: '08:30' }] },   // time map: exact WMS time → slide time
 //         { type: 'shift', docks: ['S3'], shift: -30 }]                        // shift: any WMS time ± minutes
 // time-map groups are checked first, then shift groups; the first match wins.
+// Window rule ({ type: 'window', windows: ['1D28'], time: '15:30' }, agreed 19/10/2026): rows of these Window Names are
+// due at that time on the day of their truck (Shipping No. date); not on a truck yet -> the WMS Due Date's day.
+// Checked after DataSlide and before the Dock rules.
+function windowDue(row, wmsDue, rules) {
+  const win = String(row.w || '').trim().toUpperCase();
+  for (const g of rules || []) {
+    if (g.type !== 'window' || !win || !(g.windows || []).some((w) => String(w).toUpperCase() === win)) continue;
+    const m = /^(\d{1,2}):(\d{2})$/.exec(g.time || '');
+    const trip = parseTrip(row.sn), base = trip ? trip.date : wmsDue;
+    if (!m || !base) return null;
+    return new Date(base.getFullYear(), base.getMonth(), base.getDate(), +m[1], +m[2]);
+  }
+  return null;
+}
 function ruleDue(row, wmsDue, rules) {
   if (!wmsDue || !rules) return null;
   const dock = (row.d || '').toUpperCase();
   const hasDock = (g) => g.docks.some((x) => x.toUpperCase() === dock);
   const hhmm = `${String(wmsDue.getHours()).padStart(2, '0')}:${String(wmsDue.getMinutes()).padStart(2, '0')}`;
   for (const g of rules) {
-    if (g.type === 'shift' || !hasDock(g)) continue;
+    if (g.type || !hasDock(g)) continue; // time-map groups have no type
     const m = (g.map || []).find((x) => x.orig === hhmm);
     if (!m) continue;
     const [sh, sm] = m.slide.split(':').map(Number);
@@ -41,6 +55,8 @@ function dueOf(r, slideMap, rules) {
     const sd = slideMap.get(r.o);
     return sd ? { due: fromKey(sd), src: 'Slide' } : { due: wmsDue, src: 'Slide→WMS' };
   }
+  const wd = windowDue(r, wmsDue, rules);
+  if (wd) return { due: wd, src: 'Window' };
   const rd = ruleDue(r, wmsDue, rules);
   return rd ? { due: rd, src: 'Rule' } : { due: wmsDue, src: 'WMS' };
 }

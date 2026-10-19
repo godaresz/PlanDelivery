@@ -7,12 +7,17 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const WHS = ['WH1', 'WH4'];
 
+// Window rules added after rules were first saved: merged in once (until the rules are saved again with winInit)
+const DEFAULT_WINDOW_RULES = [{ type: 'window', windows: ['1D28'], time: '15:30' }];
+const withRuleDefaults = (r) => (r && r.groups ? (r.winInit ? r : { ...r, groups: r.groups.concat(DEFAULT_WINDOW_RULES) }) : DEFAULT_RULES);
 const DEFAULT_RULES = {
   keepDays: 7, staleWmsMin: 30, staleIlmsMin: 30, soonMin: 30, escMin: 30, scanMin: 60,
   groups: [
     { docks: ['S0', 'S2', 'S7', 'S9'], map: [{ orig: '07:30', slide: '08:30' }, { orig: '08:30', slide: '09:30' }] },
     { docks: ['S5', 'S6'], map: [{ orig: '07:30', slide: '09:30' }, { orig: '08:30', slide: '10:30' }] },
+    { type: 'window', windows: ['1D28'], time: '15:30' },
   ],
+  winInit: true,
 };
 
 // shift rule: signed minutes (negative = earlier)
@@ -312,7 +317,7 @@ async function autoExportRun() {
 async function lockConfirmedDues() {
   const latest = await store.loadAll();
   const slide = slideMapOf(latest.slide && latest.slide.data);
-  const rules = (latest.rules && latest.rules.groups) || DEFAULT_RULES.groups;
+  const rules = withRuleDefaults(latest.rules).groups;
   for (const wh of WHS) {
     const cur = latest[wh] && latest[wh].data;
     if (cur && lockDues(cur, slide, rules)) {
@@ -329,7 +334,7 @@ function slideMapOf(sd) {
 async function reload() {
   try {
     S.data = await store.loadAll();
-    S.rules = S.data.rules && S.data.rules.groups ? S.data.rules : DEFAULT_RULES;
+    S.rules = withRuleDefaults(S.data.rules);
     S.slideMap = slideMapOf(S.data.slide.data);
     setSoonMin(S.rules.soonMin);
     S.hist = S.data.truckhist.data || { WH1: {}, WH4: {} };
@@ -383,7 +388,7 @@ function renderSources() {
   $('#srcILMS').classList.toggle('ok', !!im);
   const g = S.rules.groups || [];
   $('#rulesMeta').textContent = g.length
-    ? g.map((x) => `${x.docks.join(',')}: ${x.type === 'shift' ? shiftLabel(x.shift)
+    ? g.map((x) => x.type === 'window' ? `Window ${(x.windows || []).join(',')}: Due ${x.time} ของวันตาม Shipping No.` : `${x.docks.join(',')}: ${x.type === 'shift' ? shiftLabel(x.shift)
       : x.map.map((m) => `${m.orig}→${m.slide}`).join(' / ')}`).join(' | ')
     : 'ยังไม่มีกฎ';
 }
@@ -1658,7 +1663,7 @@ async function uploadFile(kind, file, auto = false) {
     const index = latest.archIndex || { WH1: {}, WH4: {} };
     const hist = (latest.truckhist && latest.truckhist.data) || { WH1: {}, WH4: {} };
     const slideNow = slideMapOf(latest.slide && latest.slide.data);
-    const rulesNow = (latest.rules && latest.rules.groups) || DEFAULT_RULES.groups;
+    const rulesNow = withRuleDefaults(latest.rules).groups;
     for (const wh of found) { // a warehouse missing from the file keeps its old data
       const oldRows = (latest[wh] && latest[wh].data) || [];
       // rows of this file that may already be archived: load those archive days to lock their keys
@@ -1840,12 +1845,20 @@ function openRules() {
 function knownDocks() {
   const set = new Set();
   for (const wh of WHS) for (const r of (S.data && S.data[wh].data) || []) if (r.d) set.add(String(r.d).toUpperCase());
-  for (const g of draft.groups) g.docks.forEach((d) => set.add(d));
+  for (const g of draft.groups) (g.docks || []).forEach((d) => set.add(d));
   return [...set].sort();
 }
 function drawRules() {
   const docks = knownDocks();
   $('#rulesBody').innerHTML = draft.groups.map((g, gi) => {
+    if (g.type === 'window') {
+      return `<div class="rgroup win" data-g="${gi}">
+    <div class="rgroup-h"><span class="rtype">กำหนดเวลาตาม Window</span><b>Window Name</b>
+      <input type="text" class="wins-in" value="${esc((g.windows || []).join(','))}" placeholder="เช่น 1D28">
+      <button type="button" class="icon-btn admin-only" data-delg="${gi}" title="ลบกลุ่ม">✕</button></div>
+    <div class="shift-row">Due = <input type="time" class="win-time" value="${esc(g.time || '')}"> ของวันตาม Shipping No. (ยังไม่มีรถ = วันของ Due Date ใน WMS) · Order ที่อยู่ใน DataSlide ใช้เวลาใน DataSlide ก่อน</div>
+  </div>`;
+    }
     const shift = g.type === 'shift';
     const dir = shiftDir(g);
     const picks = docks.length ? `<div class="dock-picks">${docks.map((d) =>
@@ -1873,6 +1886,11 @@ const shiftDir = (g) => g.dir || (g.shift > 0 ? 1 : -1);
 function readRules() {
   $$('#rulesBody .rgroup').forEach((el) => {
     const g = draft.groups[+el.dataset.g];
+    if (g.type === 'window') {
+      g.windows = el.querySelector('.wins-in').value.split(/[,\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
+      g.time = el.querySelector('.win-time').value;
+      return;
+    }
     g.docks = el.querySelector('.docks').value.split(/[,\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
     if (g.type === 'shift') {
       const h = Math.max(0, Math.floor(Number(el.querySelector('.sh-h').value) || 0));
@@ -1981,6 +1999,7 @@ function bind() {
   });
   $('#btnAddGroup').addEventListener('click', () => { readRules(); draft.groups.push({ docks: [], map: [{ orig: '', slide: '' }] }); drawRules(); });
   $('#btnAddShift').addEventListener('click', () => { readRules(); draft.groups.push({ type: 'shift', docks: [], shift: -30 }); drawRules(); });
+  $('#btnAddWin').addEventListener('click', () => { readRules(); draft.groups.push({ type: 'window', windows: [], time: '15:30' }); drawRules(); });
   $('#btnCheckXlsx').addEventListener('click', exportCheck);
   $('#btnKpiXlsx').addEventListener('click', exportKpi);
   $$('#kpiDays .chip').forEach((c) => c.addEventListener('click', () => { S.kpiDays = +c.dataset.days; lsSet('sc_kpi_days', c.dataset.days); render(); }));
@@ -1989,10 +2008,11 @@ function bind() {
   $('#btnRsnDel').addEventListener('click', () => saveReasonDlg(true));
   $('#btnSaveRules').addEventListener('click', async () => {
     readRules();
-    const bad = draft.groups.some((g) => !g.docks.length || (g.type === 'shift' ? !Number.isInteger(g.shift) || !g.shift
+    const bad = draft.groups.some((g) => g.type === 'window' ? !g.windows.length || !/^\d{2}:\d{2}$/.test(g.time || '') : !g.docks.length || (g.type === 'shift' ? !Number.isInteger(g.shift) || !g.shift
       : g.map.some((m) => !/^\d{2}:\d{2}$/.test(m.orig) || !/^\d{2}:\d{2}$/.test(m.slide))));
     if (bad) { $('#rulesErr').textContent = 'กรุณาใส่ Dock และเวลาให้ครบทุกแถว'; return; }
-    draft.groups = draft.groups.filter((g) => g.type === 'shift' || g.map.length);
+    draft.groups = draft.groups.filter((g) => g.type || g.map.length);
+    draft.winInit = true; // window rules are now part of the saved rules (a deleted default stays deleted)
     draft.groups.forEach((g) => delete g.dir);
     draft.keepDays = Math.max(1, Math.min(60, Number($('#keepDays').value) || 7));
     draft.staleWmsMin = Math.max(5, Math.min(4320, Number($('#staleWms').value) || 30));

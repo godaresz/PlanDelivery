@@ -40,6 +40,17 @@ test('1. shift rule moves any WMS due, only when no time-map rule matched', () =
   assert.equal(fmtKey(a.due), '2026-10-15 08:30');
   assert.equal(fmtKey(b.due), '2026-10-15 08:00');
 });
+test('1. Window rule: 1D28 due 15:30 of the Shipping No. day (WMS due day without a truck); DataSlide first; before Dock rules', () => {
+  const rules = [{ docks: ['S4'], map: [{ orig: '07:35', slide: '08:30' }] }, { type: 'window', windows: ['1D28'], time: '15:30' }];
+  const on = ev([row({ w: '1D28', d: 'S4', dd: '2026-10-16 07:35', sn: '202610151D018' })], '2026-10-15 06:00', new Map(), rules)[0];
+  assert.equal(fmtKey(on.due), '2026-10-15 15:30'); assert.equal(on.src, 'Window');
+  const noTruck = ev([row({ w: '1d28', d: 'S4', dd: '2026-10-16 20:15' })], '2026-10-15 06:00', new Map(), rules)[0];
+  assert.equal(fmtKey(noTruck.due), '2026-10-16 15:30');
+  const slide = ev([row({ w: '1D28', dd: '2026-10-16 07:35', sn: '202610151D018' })], '2026-10-15 06:00', new Map([['O1', '2026-10-15 10:00']]), rules)[0];
+  assert.equal(fmtKey(slide.due), '2026-10-15 10:00'); assert.equal(slide.src, 'Slide');
+  const other = ev([row({ w: '1D27', d: 'S4', dd: '2026-10-16 07:35' })], '2026-10-15 06:00', new Map(), rules)[0];
+  assert.equal(fmtKey(other.due), '2026-10-16 08:30'); assert.equal(other.src, 'Rule');
+});
 test('1. CONFIRMED rows keep the due they were confirmed with (lockDues)', () => {
   const rows = [row({ cf: 1, sh: '2026-10-15 08:10', tr: '71-1234' }), row({ k: 'O1|P1|PL2|', pl: 'PL2' })];
   assert.equal(lockDues(rows, new Map([['O1', '2026-10-15 09:00']]), []), 1);
