@@ -548,3 +548,12 @@ body.anim .tb-bar span { animation: growX .8s var(--ease) both; transform-origin
 .ov-plan svg { display: block; }
 .ov-plan .bv { font-size: 10.5px; }
 .plan-chart .dv { font: 700 11px 'IBM Plex Sans Thai', sans-serif; fill: #047857; paint-order: stroke; stroke: #fff; stroke-width: 3px; }
+/* Plan: clickable bars / assigned points */
+.plan-chart .hit { fill: transparent; cursor: pointer; }
+.plan-chart [data-pm] { cursor: pointer; }
+.plan-chart .pc-col:hover .bar { fill: #93C5FD; }
+.plan-chart .bar.sel { fill: #60A5FA; stroke: #1D4ED8; stroke-width: 2; }
+.plan-chart .lnp.sel { r: 6; fill: #7C3AED; }
+.plan-chart .hit.sn:hover { fill: rgba(124,58,237,.12); }
+.plan-hour { border: 2px solid #BFDBFE; animation: fadeUp .35s var(--ease) both; }
+.plan-chart .dot, .plan-chart .dv, .plan-chart .lv, .plan-chart .bv, .plan-chart .lnp, .plan-chart .ln, .plan-chart .now { pointer-events: none; }

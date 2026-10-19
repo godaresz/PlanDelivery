@@ -183,12 +183,13 @@
         <div class="panel-h">
           <h2>Plan รถรายชั่วโมง</h2>
           <button class="btn sm" id="btnPlanXlsx">⇩ Export Excel</button>
-          <span class="hint">จำนวนรถที่ต้องใช้ในแต่ละชั่วโมง ตาม Due ของงานทั้งหมดในช่วงที่เลือก (ส่งแล้ว + ยังไม่ส่ง) ·
+          <span class="hint">คลิกแท่ง Plan หรือจุดจัดรถแล้ว เพื่อดูรายละเอียดของชั่วโมงนั้น · จำนวนรถที่ต้องใช้ในแต่ละชั่วโมง ตาม Due ของงานทั้งหมดในช่วงที่เลือก (ส่งแล้ว + ยังไม่ส่ง) ·
             คำนวณแบบเดียวกับหน้าประมาณการรถ (กลุ่ม Dock + Window ที่ไปด้วยกัน และจำนวนพาเลทต่อคันจากประวัติ)</span>
         </div>
         <div id="planTiles" class="kpi-row trip-tiles"></div>
         <div id="planChart" class="plan-chart"></div>
       </section>
+      <section class="panel plan-hour" id="planHour" hidden></section>
       <section class="panel">
         <div class="panel-h"><h2>รายชั่วโมง</h2><span class="hint" id="planHint"></span></div>
         <div class="table-wrap"><table class="tbl plan" id="tblPlan"></table></div>

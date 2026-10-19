@@ -882,7 +882,7 @@ function renderPlan(all, scope, trips) {
   const dueMode = S.mode !== 'sn' && start && end;
   if (S.mode !== 'sn' && !dueMode) {
     $('#planTiles').innerHTML = ''; $('#cntPlan').textContent = ''; $('#tblPlan').innerHTML = '';
-    $('#planChart').innerHTML = '<p class="hint">เลือกเวลาเริ่มและเวลาจบก่อน</p>'; S.planExport = null; return;
+    $('#planChart').innerHTML = '<p class="hint">เลือกเวลาเริ่มและเวลาจบก่อน</p>'; S.planExport = null; $('#planHour').hidden = true; return;
   }
   const hk = (d) => hourBucket(d).key;
   const hours = new Map(); // key -> { key, t: Date, before, wh: { WH1: {...} } }
@@ -970,14 +970,15 @@ function renderPlan(all, scope, trips) {
     ${list.map((h, i) => {
       const n = sum(h, (c) => c.n), x = cx(i) - bw / 2, cur = !h.before && now >= h.t && now < new Date(h.t.getTime() + 3600000);
       return `<g class="pc-col${cur ? ' cur' : ''}">${cur ? `<rect x="${cx(i) - step / 2}" y="${P.t - 14}" width="${step}" height="${H - P.t - P.b + 14}" class="now"/>` : ''}
-        <rect x="${x}" y="${y(n)}" width="${bw}" height="${Math.max(0, H - P.b - y(n))}" rx="4" class="bar" style="animation-delay:${(i * 0.03).toFixed(2)}s"><title>${dayLbl(h)} ${hourLbl(h)}: Plan ${n} คัน · จัดแล้ว ${sum(h, (c) => c.sn.size)} · ออกแล้ว ${sum(h, (c) => c.left.size)}</title></rect>
+        <rect x="${cx(i) - step / 2}" y="${P.t}" width="${step}" height="${H - P.t - P.b}" class="hit" data-pk="${h.key}" data-pm="plan"><title>${dayLbl(h)} ${hourLbl(h)}: คลิกดูรถตาม Plan แยกกลุ่ม Dock</title></rect>
+        <rect x="${x}" y="${y(n)}" width="${bw}" height="${Math.max(0, H - P.b - y(n))}" rx="4" class="bar${S.planSel && S.planSel.key === h.key && S.planSel.mode === 'plan' ? ' sel' : ''}" data-pk="${h.key}" data-pm="plan" style="animation-delay:${(i * 0.03).toFixed(2)}s"><title>${dayLbl(h)} ${hourLbl(h)}: Plan ${n} คัน · จัดแล้ว ${sum(h, (c) => c.sn.size)} · ออกแล้ว ${sum(h, (c) => c.left.size)}</title></rect>
         ${n ? `<text x="${cx(i)}" y="${y(n) - 5}" class="bv" text-anchor="middle">${n}</text>` : ''}
         <text x="${cx(i)}" y="${H - P.b + 15}" class="ax" text-anchor="middle">${h.before ? 'ก่อน' : String(h.t.getHours()).padStart(2, '0')}</text>
         ${!h.before && (i === 0 || list[i - 1].before || hourBucket(list[i - 1].t).day !== hourBucket(h.t).day) ? `<text x="${cx(i)}" y="${H - P.b + 30}" class="ax d" text-anchor="middle">${fmtShow(h.t).slice(0, 5)}</text>` : ''}
 </g>`;
     }).join('')}
     <path d="${line}" class="ln"/>
-    ${list.map((h, i) => { const v = sum(h, (c) => c.sn.size); return `<circle cx="${cx(i)}" cy="${y(v)}" r="3" class="lnp"/>${v ? `<text x="${cx(i) + 6}" y="${Math.abs(y(v) - y(sum(h, (c) => c.n))) < 16 ? y(v) + 15 : y(v) - 6}" class="lv">${v}</text>` : ''}`; }).join('')}
+    ${list.map((h, i) => { const v = sum(h, (c) => c.sn.size); return `<circle cx="${cx(i)}" cy="${y(v)}" r="3" class="lnp${S.planSel && S.planSel.key === h.key && S.planSel.mode === 'sn' ? ' sel' : ''}"/>${v ? `<circle cx="${cx(i)}" cy="${y(v)}" r="11" class="hit sn" data-pk="${h.key}" data-pm="sn"><title>${dayLbl(h)} ${hourLbl(h)}: จัดรถแล้ว ${v} คัน — คลิกดูรายชื่อรถ</title></circle>` : ''}${v ? `<text x="${cx(i) + 6}" y="${Math.abs(y(v) - y(sum(h, (c) => c.n))) < 16 ? y(v) + 15 : y(v) - 6}" class="lv">${v}</text>` : ''}`; }).join('')}
     ${list.map((h, i) => { const v = sum(h, (c) => c.left.size); return v ? `<circle cx="${cx(i)}" cy="${y(v)}" r="4.5" class="dot"><title>ออกแล้ว ${v} คัน</title></circle><text x="${cx(i) - 7}" y="${y(v) + 4}" class="dv" text-anchor="end">${v}</text>` : ''; }).join('')}
     </svg></div>`;
 
@@ -1007,7 +1008,13 @@ function renderPlan(all, scope, trips) {
       return `<td class="n">${c.n} คัน<div class="est-u">${f1(c.est)}</div></td><td class="n">${c.p} / ${c.r}${c.open ? `<div class="est-u">ค้าง ${c.open}</div>` : ''}</td><td class="n">${c.sn} คัน<div class="est-u">มี SN ${c.hasSn}/${c.p + c.r}</div></td><td class="n">${c.left}</td>`;
     }).join('')}${many ? `<td class="n">${tot.n} คัน</td>` : ''}<td class="n">${tot.n} / ${tot.left}</td><td></td></tr></tfoot>`;
   renderPlanDock(list, scope, byGroup, hourLbl, dayLbl, now);
-  S.planExport = { list, scope, byGroup, hourLbl, dayLbl, cum };
+  S.planExport = { list, scope, byGroup, hourLbl, dayLbl, cum, trips: new Map(trips.map((x) => [x.sn, x])) };
+  $$('#planChart [data-pk]').forEach((el) => el.addEventListener('click', () => {
+    const k = { key: el.dataset.pk, mode: el.dataset.pm };
+    S.planSel = S.planSel && S.planSel.key === k.key && S.planSel.mode === k.mode ? null : k; // click again = close
+    render(true); if (S.planSel) $('#planHour').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }));
+  renderPlanHour();
   const sc = $('#planChart .plan-scroll'); if (sc && keepX) sc.scrollLeft = keepX;
   // second header row sticks right under the first one (measured, not guessed)
   const h1 = $('#tblPlan thead tr');
@@ -1207,6 +1214,41 @@ function exportKpi() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'รายกะ');
   XLSX.writeFile(wb, `KPI_${stamp()}.xlsx`);
+}
+
+// Plan page: details of one clicked hour — the Plan bar shows Plan trucks by Dock group, the "assigned" point the trucks
+function renderPlanHour() {
+  const el = $('#planHour'), x = S.planExport, sel = S.planSel;
+  const h = sel && x && x.list.find((y) => y.key === sel.key);
+  el.hidden = !h;
+  if (!h) return;
+  const title = `${x.dayLbl(h)} ${x.hourLbl(h)}`;
+  const close = '<button class="btn sm ghost" id="btnPlanHourX">✕ ปิด</button>';
+  if (sel.mode === 'plan') {
+    const rows = x.scope.flatMap((w) => (x.byGroup[w] || []).map((g) => [w, g, g.cells.get(h.key)]).filter(([, , c]) => c && (c.n || c.p || c.r)))
+      .sort((a, b) => b[2].est - a[2].est);
+    const n = x.scope.reduce((a, w) => a + h.wh[w].n, 0);
+    el.innerHTML = `<div class="panel-h"><h2>รถตาม Plan · ${esc(title)} <span class="muted">${n} คัน</span></h2>${close}
+        <span class="hint">แยกตามกลุ่ม Dock + Window ที่ไปด้วยกัน · ตัวเลขในวงเล็บ = Est ทศนิยม · ค้าง = Pallet+Rack ที่ยังไม่ส่ง</span></div>
+      ${rows.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>WH</th><th>Dock</th><th>Window Name</th><th class="n">รถ (คัน)</th><th class="n">Pallet / Rack</th><th class="n">ค้าง</th></tr></thead>
+        <tbody>${rows.map(([w, g, c]) => `<tr><td>${w}</td><td>${gchips(g.g.docks, g.openDocks)}</td><td class="wins">${gchips(g.g.windows, g.openWins)}</td>
+          <td class="n plan-n"><b>${c.n}</b> <span class="est-u">(${f1(c.est)})</span></td><td class="n">${n0(c.p)} / ${n0(c.r)}</td><td class="n">${c.open ? `<span class="c-pe">${c.open}</span>` : '<span class="z">-</span>'}</td></tr>`).join('')}</tbody></table></div>`
+        : '<p class="hint">ไม่มีงานในชั่วโมงนี้</p>'}`;
+  } else {
+    const list = x.scope.flatMap((w) => [...h.wh[w].sn]).map((sn) => x.trips.get(sn)).filter(Boolean)
+      .sort((a, b) => (a.dueStart || 0) - (b.dueStart || 0) || a.sn.localeCompare(b.sn));
+    const left = list.filter((t) => t.left).length;
+    el.innerHTML = `<div class="panel-h"><h2>จัดรถแล้ว · ${esc(title)} <span class="muted">${list.length} คัน · ออกแล้ว ${left}</span></h2>${close}
+        <span class="hint">รถที่มี Shipping No. ซึ่ง Due แรกอยู่ในชั่วโมงนี้ · คลิกแถวเพื่อดูรายละเอียดของรถ</span></div>
+      <div class="table-wrap"><table class="tbl"><thead><tr><th>WH</th><th>Shipping No.</th><th>Dock</th><th>Window Name</th><th class="n">Pallet / Rack</th>
+        <th>Due เริ่ม – จบ</th><th>ออกจริง</th><th>สถานะ</th></tr></thead>
+      <tbody>${list.map((t) => `<tr class="clickable" data-sn="${esc(t.sn)}"><td>${t.whOwn}</td><td class="t"><b>${esc(t.sn)}</b></td>
+        <td>${esc([...t.docks].sort().join(', ')) || '-'}</td><td class="wins">${esc([...t.wins].sort().join(', '))}</td>
+        <td class="n">${n0(t.p.size)} / ${n0(t.r.size)}</td><td class="t">${dueRange(t.dueStart, t.dueEnd)}</td>
+        <td class="t">${t.left && t.dep ? fmtShow(t.dep) : '<span class="z">-</span>'}</td><td>${tripStatus(t)}</td></tr>`).join('')}</tbody></table></div>`;
+    $$('#planHour tr.clickable').forEach((tr) => tr.addEventListener('click', () => openTruck(tr.dataset.sn)));
+  }
+  $('#btnPlanHourX').addEventListener('click', () => { S.planSel = null; render(true); });
 }
 
 // ---------- Est accuracy history (back-test on the truck history, learning only from days before each shift) ----------

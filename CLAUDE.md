@@ -129,6 +129,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    used (`hourBucket`); whole trucks per WH by largest remainder (adds up to the rounded WH sum). Shown with: trucks whose
    Due start is in the hour (Shipping No., value labels on the chart line; table also shows pallets+racks that already have a Shipping No.) and trucks that left, counted in the hour of their Due start like the assigned trucks (19/10/2026; before: the departure hour).
    Backlog rows due before the start go to one "ค้างก่อนช่วง" row.
+   Click a Plan bar → panel with that hour's Plan trucks by Dock group; click an assigned (purple) point → list of those trucks
+   (`renderPlanHour`, `S.planSel`; click again or ✕ closes).
 
 13. **Truck reasons** (19/10/2026): late or overdue trucks get a "เหตุผล" column on the truck page; signed-in editors pick a
    reason (REASONS list in app.js: รถมาช้า, ของไม่พร้อม, โหลดช้า, Dock ไม่ว่าง, รอเอกสาร, คุณภาพ, ระบบ, ลูกค้าขอเลื่อน, อื่น ๆ)
