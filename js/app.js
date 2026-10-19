@@ -601,7 +601,8 @@ function ovTruckBar(trips) {
     <div class="tb-bar">${G.filter((g) => g[2].length).map(([c, l, a]) => `<span class="tb-${c}" style="flex:${a.length}" title="${l} ${a.length} คัน">${a.length}</span>`).join('')}</div>
     <div class="tb-leg">${G.map(([c, l, a, f]) => `<a href="#" class="tb-chip${a.length ? '' : ' zero'}" data-tst="${f}"><i class="tb-${c}"></i>${l} <b>${a.length}</b></a>`).join('')}</div>`;
 }
-// overview: small hourly chart (from the Plan page computation): bars = Plan trucks, dots = trucks that left
+// overview: small hourly chart (from the Plan page computation): bars = Plan trucks, line = trucks with a Shipping No.
+// (Due start in the hour), dots = trucks that left
 function renderOvPlan() {
   const el = $('#ovPlan');
   const x = S.planExport;
@@ -610,7 +611,7 @@ function renderOvPlan() {
   const L = x.list.filter((h) => !h.before), now = new Date();
   const sum = (h, f) => x.scope.reduce((a, w) => a + f(h.wh[w]), 0);
   const W = Math.max(320, (el.clientWidth || 520) - 2), H = 150, P = { l: 22, r: 6, t: 14, b: 22 };
-  const vmax = Math.max(1, ...L.map((h) => Math.max(sum(h, (c) => c.n), sum(h, (c) => c.left.size))));
+  const vmax = Math.max(1, ...L.map((h) => Math.max(sum(h, (c) => c.n), sum(h, (c) => c.left.size), sum(h, (c) => c.sn.size))));
   const step = (W - P.l - P.r) / Math.max(1, L.length), bw = Math.min(18, step * 0.6);
   const y = (v) => P.t + (H - P.t - P.b) * (1 - v / vmax), cx = (i) => P.l + step * i + step / 2;
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" role="img" aria-label="รถรายชั่วโมง">
@@ -618,12 +619,14 @@ function renderOvPlan() {
     ${L.map((h, i) => {
       const n = sum(h, (c) => c.n), lf = sum(h, (c) => c.left.size), cur = now >= h.t && now < new Date(h.t.getTime() + 3600000);
       return `${cur ? `<rect x="${cx(i) - step / 2}" y="${P.t - 10}" width="${step}" height="${H - P.t - P.b + 10}" class="now"/>` : ''}
-        <rect x="${cx(i) - bw / 2}" y="${y(n)}" width="${bw}" height="${Math.max(0, H - P.b - y(n))}" rx="3" class="bar"><title>${x.hourLbl(h)} Plan ${n} · ออกแล้ว ${lf}</title></rect>
+        <rect x="${cx(i) - bw / 2}" y="${y(n)}" width="${bw}" height="${Math.max(0, H - P.b - y(n))}" rx="3" class="bar"><title>${x.hourLbl(h)} Plan ${n} · จัดแล้ว ${sum(h, (c) => c.sn.size)} · ออกแล้ว ${lf}</title></rect>
         ${n ? `<text x="${cx(i)}" y="${y(n) - 3}" class="bv" text-anchor="middle">${n}</text>` : ''}
         ${lf ? `<circle cx="${cx(i)}" cy="${y(lf)}" r="3.5" class="dot"/>` : ''}
         ${i % Math.ceil(L.length / 13) === 0 ? `<text x="${cx(i)}" y="${H - 6}" class="ax" text-anchor="middle">${String(h.t.getHours()).padStart(2, '0')}</text>` : ''}`;
-    }).join('')}</svg>
-    <div class="plan-legend"><span><i class="lg-bar"></i>รถตาม Plan</span><span><i class="lg-dot"></i>ออกแล้ว</span><span class="muted">แถบเหลือง = ชั่วโมงนี้</span></div>`;
+    }).join('')}
+    <path d="${L.map((h, i) => `${i ? 'L' : 'M'}${cx(i).toFixed(1)},${y(sum(h, (c) => c.sn.size)).toFixed(1)}`).join('')}" class="ln"/>
+    ${L.map((h, i) => { const v = sum(h, (c) => c.sn.size); return v ? `<circle cx="${cx(i)}" cy="${y(v)}" r="2.5" class="lnp"/><text x="${cx(i) + 5}" y="${Math.abs(y(v) - y(sum(h, (c) => c.n))) < 14 ? y(v) + 13 : y(v) - 4}" class="lv">${v}</text>` : ''; }).join('')}</svg>
+    <div class="plan-legend"><span><i class="lg-bar"></i>รถตาม Plan</span><span><i class="lg-line"></i>จัดรถแล้ว (Shipping No.)</span><span><i class="lg-dot"></i>ออกแล้ว</span><span class="muted">แถบเหลือง = ชั่วโมงนี้</span></div>`;
 }
 
 // trucks column counts only the trucks shown on the truck page (by the shift in their Shipping No.),

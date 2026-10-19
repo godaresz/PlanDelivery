@@ -145,7 +145,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    centre) with a clickable legend (→ detail page filtered) and a truck footer; truck status as one stacked bar (each truck in
    one group: left on time / late, loading, soon, not due, overdue, overdue > escMin; a chip opens the truck page filtered to
    exactly that group, so the counts match) next to a
-   small hourly Plan-vs-left chart (from the Plan computation); then top overdue Windows and trucks not left.
+   small hourly chart (from the Plan computation: bars Plan, purple line trucks with a Shipping No., dots trucks that left); then top overdue Windows and trucks not left.
    **Other features**: data cards show file time (`meta.fileAt` = file.lastModified) + upload time ·
    browser alerts per device (🔔 button, localStorage `sc_notify`): Notification + beep when a truck newly becomes "soon" or
    overdue, only while viewing now; what is on screen at open / WH or mode change is not alerted (`notifyCheck`) ·
