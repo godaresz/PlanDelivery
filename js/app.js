@@ -559,7 +559,7 @@ function renderKpis(all, scope) {
     const od = tot(k.od), pe = tot(k.pe), dn = tot(k.dn), T = od + pe + dn;
     const pct = T ? Math.round((dn / T) * 100) : 0;
     const meta = S.data[wh].meta;
-    const leg = (cls, lbl, v, det, st) => `<a href="#" class="lg-row ${cls}" data-st="${st}"><i></i><span class="lg-l">${lbl}</span>
+    const leg = (cls, lbl, v, det, st) => `<a href="#" class="lg-row ${cls}" data-st="${st}" data-wh="${wh}"><i></i><span class="lg-l">${lbl}</span>
       <b class="lg-v">${v.toLocaleString()}</b><span class="lg-d">${det}</span></a>`;
     return `<div class="kpi-wh">
       <h3><span class="wh-name">${wh}</span><span class="muted">${meta ? 'อัปโหลด ' + fmtShow(new Date(meta.updatedAt)) : 'ยังไม่มีข้อมูล'}</span></h3>
@@ -577,19 +577,23 @@ function renderKpis(all, scope) {
         ${t.od ? `<span class="c-od">เลย Due <b>${t.od}</b></span>` : ''}${t.late ? `<span class="c-late">ออกช้า <b>${t.late}</b></span>` : ''}</div>
     </div>`;
   }).join('');
-  $$('#kpis .lg-row').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); S.status = a.dataset.st; S.win = null; go('detail'); }));
+  $$('#kpis .lg-row').forEach((a) => a.addEventListener('click', (e) => {
+    e.preventDefault(); S.status = a.dataset.st; S.win = null;
+    if (S.wh !== a.dataset.wh) { S.wh = a.dataset.wh; $$('#whTabs .tab').forEach((x) => x.classList.toggle('active', x.dataset.wh === S.wh)); saveFilters(); }
+    go('detail');
+  }));
 }
 // overview: trucks by status as one stacked bar (each truck in exactly one group); click a group = truck page filtered
 function ovTruckBar(trips) {
   const esc = trips.filter((x) => isEsc(x)), od = trips.filter((x) => x.od && !isEsc(x) && !x.loading);
   const G = [
-    ['on', 'ออกแล้ว · ตรงเวลา', trips.filter((x) => x.left && !x.late), 'LEFT'],
+    ['on', 'ออกแล้ว · ตรงเวลา', trips.filter((x) => x.left && !x.late), 'ONTIME'],
     ['late', 'ออกแล้ว · ช้า', trips.filter((x) => x.left && x.late), 'LATE'],
-    ['load', 'ขึ้นรถแล้ว · รอ ILMS', trips.filter((x) => x.loading && !isEsc(x)), 'LOADING'],
-    ['soon', `ใกล้ถึง Due ≤ ${SOON_MIN} นาที`, trips.filter((x) => x.soon), 'SOON'],
-    ['pend', 'ยังไม่ถึง Due', trips.filter((x) => !x.left && !x.od && !x.soon && !x.loading), 'REMAIN'],
-    ['od', 'เลย Due ยังไม่ออก', od, 'OD'],
-    ['esc', `เลย Due เกิน ${escMin()} นาที`, esc, 'OD'],
+    ['load', 'ขึ้นรถแล้ว · รอ ILMS', trips.filter((x) => x.loading && !isEsc(x)), 'LOADX'],
+    ['soon', `ใกล้ถึง Due ≤ ${SOON_MIN} นาที`, trips.filter((x) => x.soon && !x.loading), 'SOONX'],
+    ['pend', 'ยังไม่ถึง Due', trips.filter((x) => !x.left && !x.od && !x.soon && !x.loading), 'NOTDUE'],
+    ['od', 'เลย Due ยังไม่ออก', od, 'ODX'],
+    ['esc', `เลย Due เกิน ${escMin()} นาที`, esc, 'ESC'],
   ];
   const n = trips.length || 1, left = trips.filter((x) => x.left).length;
   return `<div class="tb-head"><div><b class="tb-big">${trips.length}</b> คัน <span class="muted">ใช้ทั้งหมด (ตาม Shipping No.)</span></div>
@@ -739,8 +743,13 @@ function truckTiles(T) {
     tile('overdue', 'ออกช้า', T.late, T.left ? `${Math.round((T.late / T.left) * 100)}% ของที่ออกแล้ว` : ''),
   ].join('');
 }
-const TRUCK_CHIPS = [['ALL', 'ทั้งหมด'], ['LEFT', 'ออกแล้ว'], ['LATE', 'ออกช้า'], ['REMAIN', 'ยังไม่ออก'], ['SOON', 'ใกล้ถึง Due'], ['LOADING', 'ขึ้นรถแล้ว · รอ ILMS'], ['OD', 'ยังไม่ออก · เลยกำหนด']];
-const truckFilter = { ALL: () => true, LEFT: (x) => x.left, LATE: (x) => x.late, REMAIN: (x) => !x.left, SOON: (x) => x.soon, LOADING: (x) => x.loading, OD: (x) => x.od };
+const TRUCK_CHIPS = [['ALL', 'ทั้งหมด'], ['LEFT', 'ออกแล้ว'], ['LATE', 'ออกช้า'], ['REMAIN', 'ยังไม่ออก'], ['SOON', 'ใกล้ถึง Due'], ['LOADING', 'ขึ้นรถแล้ว · รอ ILMS'], ['OD', 'ยังไม่ออก · เลยกำหนด'], ['ESC', 'เลย Due เกิน'], ['NOTDUE', 'ยังไม่ถึง Due']];
+const truckFilter = { ALL: () => true, LEFT: (x) => x.left, LATE: (x) => x.late, REMAIN: (x) => !x.left, SOON: (x) => x.soon, LOADING: (x) => x.loading, OD: (x) => x.od,
+  ESC: (x) => isEsc(x), NOTDUE: (x) => !x.left && !x.od && !x.soon && !x.loading,
+  // exact groups of the overview status bar (each truck in one group); shown as an extra chip when picked there
+  ONTIME: (x) => x.left && !x.late, LOADX: (x) => x.loading && !isEsc(x), SOONX: (x) => x.soon && !x.loading,
+  ODX: (x) => x.od && !isEsc(x) && !x.loading };
+const OV_CHIPS = { ONTIME: 'ออกแล้ว · ตรงเวลา', LOADX: 'ขึ้นรถแล้ว · รอ ILMS (ไม่รวมเลย Due เกิน)', SOONX: 'ใกล้ถึง Due (ยังไม่ขึ้นรถ)', ODX: 'เลย Due ยังไม่ออก (ไม่เกิน)' };
 
 function renderTrips(list, rows) {
   const showWh = S.wh === 'ALL';
@@ -765,8 +774,9 @@ function renderTrips(list, rows) {
     <tfoot><tr><td>รวม</td><td></td><td></td><td class="n">${T.used}</td><td class="n">${T.left}</td><td class="n">${T.remain}</td>
       <td class="n">${T.late}</td><td class="n">${T.od}</td><td class="n">${list.filter((x) => x.src === 'ILMS').length}</td></tr></tfoot>` : '';
 
-  const cnt = Object.fromEntries(TRUCK_CHIPS.map(([k]) => [k, list.filter(truckFilter[k]).length]));
-  $('#truckChips').innerHTML = TRUCK_CHIPS.map(([k, l]) => `<button class="chip${S.truckSt === k ? ' on' : ''}" data-tst="${k}">${k === 'SOON' ? `${l} (≤ ${SOON_MIN} นาที)` : l} (${cnt[k]})</button>`).join('');
+  const chips = OV_CHIPS[S.truckSt] ? TRUCK_CHIPS.concat([[S.truckSt, OV_CHIPS[S.truckSt]]]) : TRUCK_CHIPS;
+  const cnt = Object.fromEntries(chips.map(([k]) => [k, list.filter(truckFilter[k]).length]));
+  $('#truckChips').innerHTML = chips.map(([k, l]) => `<button class="chip${S.truckSt === k ? ' on' : ''}" data-tst="${k}">${k === 'SOON' ? `${l} (≤ ${SOON_MIN} นาที)` : k === 'ESC' ? `${l} ${escMin()} นาที` : l} (${cnt[k]})</button>`).join('');
   $$('#truckChips .chip').forEach((c) => c.addEventListener('click', () => { S.truckSt = c.dataset.tst; render(); }));
   const shown = list.filter(truckFilter[S.truckSt] || truckFilter.ALL);
 
@@ -869,7 +879,7 @@ function renderPlan(all, scope, trips) {
   const dueMode = S.mode !== 'sn' && start && end;
   if (S.mode !== 'sn' && !dueMode) {
     $('#planTiles').innerHTML = ''; $('#cntPlan').textContent = ''; $('#tblPlan').innerHTML = '';
-    $('#planChart').innerHTML = '<p class="hint">เลือกเวลาเริ่มและเวลาจบก่อน</p>'; return;
+    $('#planChart').innerHTML = '<p class="hint">เลือกเวลาเริ่มและเวลาจบก่อน</p>'; S.planExport = null; return;
   }
   const hk = (d) => hourBucket(d).key;
   const hours = new Map(); // key -> { key, t: Date, before, wh: { WH1: {...} } }
@@ -1862,9 +1872,10 @@ function bind() {
     const d = new Date(); if (c.dataset.snq === 'yesterday') d.setDate(d.getDate() - 1);
     S.snDate = ymd(d); drawMode(); saveFilters(); render();
   }));
-  ['#fStart', '#fEnd', '#fBacklog'].forEach((s) => $(s).addEventListener('change', () => {
+  ['#fStart', '#fEnd'].forEach((s) => $(s).addEventListener('change', () => {
     $$('.quick .chip[data-q]').forEach((c) => c.classList.remove('on')); saveFilters(); render();
   }));
+  $('#fBacklog').addEventListener('change', () => { saveFilters(); render(); }); // keeps the shift button (range unchanged)
   $$('#whTabs .tab').forEach((t) => t.addEventListener('click', () => {
     S.wh = t.dataset.wh; S.win = null; S.limit = 300;
     $$('#whTabs .tab').forEach((x) => x.classList.toggle('active', x === t)); saveFilters(); render();
@@ -2040,10 +2051,11 @@ function beep() {
 }
 // alert once per truck and state; what is already on screen when the page opens (or the WH / mode changes) is not alerted
 function notifyCheck(trips) {
-  if (!notifOn() || !viewingNow() || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  // not watching now: forget what was seen, so coming back to "now" first seeds silently (no burst of old trucks)
+  if (!notifOn() || !viewingNow() || typeof Notification === 'undefined' || Notification.permission !== 'granted') { notif.seen = null; return; }
   const cur = new Map();
   for (const x of trips) if (isEsc(x)) cur.set(x.sn + '|esc', x); else if (x.od) cur.set(x.sn + '|od', x); else if (x.soon) cur.set(x.sn + '|soon', x);
-  const scope = `${S.wh}|${S.mode}|${S.search}`;
+  const scope = `${S.wh}|${S.mode}|${S.search}|${$('#fStart').value}|${$('#fEnd').value}|${S.snDate}|${S.snShift}`;
   if (!notif.seen || notif.scope !== scope) { notif.seen = new Set(cur.keys()); notif.scope = scope; return; }
   const fresh = [...cur].filter(([k]) => !notif.seen.has(k)).map(([k, x]) => [k.split('|').pop(), x]);
   notif.seen = new Set(cur.keys());
@@ -2121,9 +2133,9 @@ async function repSave(sh, ask) {
   if (rep.busy || !S.data) return;
   rep.busy = true;
   try {
-    const wb = shiftReportBook(sh);
-    if (!rep.h) { XLSX.writeFile(wb, repName(sh)); rep.msg = `ดาวน์โหลด ${repName(sh)} แล้ว`; return; }
+    if (!rep.h) { XLSX.writeFile(shiftReportBook(sh), repName(sh)); rep.msg = `ดาวน์โหลด ${repName(sh)} แล้ว`; return; }
     if (!(await repPerm(ask))) { rep.msg = 'ยังไม่ได้รับอนุญาตให้เขียนโฟลเดอร์ — กด "บันทึกรายงานกะล่าสุด" 1 ครั้ง'; return; }
+    const wb = shiftReportBook(sh); // built only when it can be written
     const fh = await rep.h.getFileHandle(repName(sh), { create: true });
     const w = await fh.createWritable();
     await w.write(new Uint8Array(XLSX.write(wb, { bookType: 'xlsx', type: 'array' }))); await w.close();
@@ -2182,7 +2194,7 @@ async function main() {
   $('#modeBadge').classList.toggle('demo', store.isDemo);
   tick(); setInterval(tick, 1000);
   setInterval(minuteTick, 60000); // statuses move as time passes, the view follows the shift change, shift report
-  drawNotif(); repInit();
+  drawNotif(); repInit().catch(() => drawRep());
   // installable app (PWA): only on the real site (https), not on a local test server
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
   await store.init();
