@@ -526,14 +526,14 @@ function renderAll() {
 
 function kpiCalc(rows) {
   const k = { so: new Set(), od: { p: new Set(), r: new Set(), b: 0 }, pe: { p: new Set(), r: new Set(), b: 0 },
-    sc: { p: new Set(), b: 0 }, dn: { p: new Set(), r: new Set(), b: 0, late: 0 } };
+    sc: { p: new Set(), b: 0, od: new Set() }, dn: { p: new Set(), r: new Set(), b: 0, late: 0 } };
   for (const r of rows) {
     const pal = r.pl || r.k;
     const t = r.st === ST.OVERDUE ? k.od : r.st === ST.PENDING ? k.pe : k.dn;
     if (r.soon) k.so.add(pal);
     (r.rk ? t.r : t.p).add(pal); t.b += r.bx;
     if (r.st === ST.DONE_LATE) k.dn.late++;
-    if (r.scanned) { k.sc.p.add(pal); k.sc.b += r.bx; }
+    if (r.scanned) { k.sc.p.add(pal); k.sc.b += r.bx; if (r.st === ST.OVERDUE) k.sc.od.add(pal); } // a pallet with any overdue row counts as overdue
   }
   return k;
 }
@@ -570,7 +570,7 @@ function renderKpis(all, scope) {
           ${leg('od', 'เลยกำหนด ยังไม่ส่ง', od, `${k.od.p.size} Pallet · ${k.od.r.size} Rack · ${k.od.b.toLocaleString()} กล่อง`, ST.OVERDUE)}
           ${leg('pe', 'รอส่ง', pe, `${k.pe.p.size} Pallet · ${k.pe.r.size} Rack · ${k.pe.b.toLocaleString()} กล่อง${k.so.size ? ` · <span class="c-soon">ใกล้ถึง Due ${k.so.size}</span>` : ''}`, ST.PENDING)}
           ${leg('dn', 'ส่งแล้ว', dn, `${k.dn.p.size} Pallet · ${k.dn.r.size} Rack${k.dn.late ? ` · <span class="c-late">ช้า ${k.dn.late} แถว</span>` : ''}`, 'DONE')}
-          ${leg('sc', 'ยิงแล้ว ยังไม่ขึ้นรถ', k.sc.p.size, `${k.sc.b.toLocaleString()} กล่อง · นับรวมในเลยกำหนด / รอส่ง`, 'SCAN')}
+          ${leg('sc', 'ยิงแล้ว ยังไม่ขึ้นรถ', k.sc.p.size, `${k.sc.b.toLocaleString()} กล่อง · เลยกำหนด ${k.sc.od.size} · รอส่ง ${k.sc.p.size - k.sc.od.size} (นับรวมข้างบนแล้ว)`, 'SCAN')}
         </div>
       </div>
       <div class="wh-foot"><span>🚚 รถ <b>${t.used}</b> คัน</span><span class="c-dn">ออกแล้ว <b>${t.left}</b></span><span>เหลือ <b>${t.remain}</b></span>
