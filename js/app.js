@@ -513,6 +513,7 @@ function renderAll() {
   renderOverview(rows, trips);
   const estTotal = renderEst(all, scope);
   renderPlan(all, scope, trips); // also keeps the nav badge current on other pages
+  renderOvPlan();
   renderDetail(rows);
   renderCheck(all, scope, trips);
   renderKpi();
@@ -537,34 +538,88 @@ function kpiCalc(rows) {
   return k;
 }
 
+// donut of a warehouse's pallets + racks in the view: shipped / pending / overdue (scanned is part of pending / overdue)
+function donut(parts, size = 132, sw = 16) {
+  const r = (size - sw) / 2, c = 2 * Math.PI * r, tot = parts.reduce((a, p) => a + p.v, 0);
+  let off = 0;
+  const segs = tot ? parts.filter((p) => p.v).map((p) => {
+    const len = (p.v / tot) * c, s = `<circle r="${r}" cx="${size / 2}" cy="${size / 2}" fill="none" stroke="${p.c}" stroke-width="${sw}"
+      stroke-dasharray="${Math.max(0, len - 2)} ${c}" stroke-dashoffset="${-off}" class="dn-seg"><title>${p.l} ${p.v}</title></circle>`;
+    off += len; return s;
+  }).join('') : '';
+  return `<svg class="donut" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}" aria-hidden="true">
+    <circle r="${r}" cx="${size / 2}" cy="${size / 2}" fill="none" stroke="#EEF0F3" stroke-width="${sw}"/>
+    <g transform="rotate(-90 ${size / 2} ${size / 2})">${segs}</g></svg>`;
+}
 function renderKpis(all, scope) {
   $('#kpis').innerHTML = scope.map((wh) => {
     const k = kpiCalc(all[wh]);
     const t = tripTotals(tripsInView([wh], all[wh]));
     const tot = (x) => x.p.size + (x.r ? x.r.size : 0);
-    const T = tot(k.od) + tot(k.pe) + tot(k.dn) || 1;
+    const od = tot(k.od), pe = tot(k.pe), dn = tot(k.dn), T = od + pe + dn;
+    const pct = T ? Math.round((dn / T) * 100) : 0;
     const meta = S.data[wh].meta;
+    const leg = (cls, lbl, v, det, st) => `<a href="#" class="lg-row ${cls}" data-st="${st}"><i></i><span class="lg-l">${lbl}</span>
+      <b class="lg-v">${v.toLocaleString()}</b><span class="lg-d">${det}</span></a>`;
     return `<div class="kpi-wh">
-      <h3><span>${wh}</span><span class="muted">${meta ? 'ไฟล์ ' + fmtShow(new Date(meta.updatedAt)) : 'ยังไม่มีข้อมูล'}</span></h3>
-      <div class="kpi-row">
-        <div class="kpi overdue"><div class="lbl">เลยกำหนด ยังไม่ส่ง</div><div class="val">${tot(k.od)}</div>
-          <div class="det">${k.od.p.size} Pallet · ${k.od.r.size} Rack · ${k.od.b.toLocaleString()} กล่อง</div></div>
-        <div class="kpi pending"><div class="lbl">รอส่ง (ยังไม่ถึงกำหนด)</div><div class="val">${tot(k.pe)}</div>
-          <div class="det">${k.pe.p.size} Pallet · ${k.pe.r.size} Rack · ${k.pe.b.toLocaleString()} กล่อง${k.so.size ? `<br><span class="c-soon">ใกล้ถึง Due ≤ ${SOON_MIN} นาที ${k.so.size} หน่วย</span>` : ''}</div></div>
-        <div class="kpi scan"><div class="lbl">ยิงแล้ว ยังไม่ขึ้นรถ</div><div class="val">${k.sc.p.size}</div>
-          <div class="det">${k.sc.b.toLocaleString()} กล่อง (นับรวมใน 2 ช่องแรก)</div></div>
-        <div class="kpi done"><div class="lbl">ส่งแล้ว</div><div class="val">${tot(k.dn)}</div>
-          <div class="det">${k.dn.p.size} Pallet · ${k.dn.r.size} Rack · ช้า ${k.dn.late} แถว</div></div>
-        <div class="kpi trip"><div class="lbl">ใช้รถ</div><div class="val">${t.used} <small>คัน</small></div>
-          <div class="det">ส่งแล้ว ${t.left} · เหลือ ${t.remain} · <span class="${t.late ? 'c-late' : ''}">ช้า ${t.late}</span></div></div>
+      <h3><span class="wh-name">${wh}</span><span class="muted">${meta ? 'อัปโหลด ' + fmtShow(new Date(meta.updatedAt)) : 'ยังไม่มีข้อมูล'}</span></h3>
+      <div class="wh-body">
+        <div class="dn-wrap">${donut([{ v: dn, c: '#10B981', l: 'ส่งแล้ว' }, { v: pe, c: '#2563EB', l: 'รอส่ง' }, { v: od, c: '#EF4444', l: 'เลยกำหนด' }])}
+          <div class="dn-c"><b>${pct}<small>%</small></b><span>ส่งแล้ว</span><span class="muted">${dn.toLocaleString()} / ${T.toLocaleString()}</span></div></div>
+        <div class="lg">
+          ${leg('od', 'เลยกำหนด ยังไม่ส่ง', od, `${k.od.p.size} Pallet · ${k.od.r.size} Rack · ${k.od.b.toLocaleString()} กล่อง`, ST.OVERDUE)}
+          ${leg('pe', 'รอส่ง', pe, `${k.pe.p.size} Pallet · ${k.pe.r.size} Rack · ${k.pe.b.toLocaleString()} กล่อง${k.so.size ? ` · <span class="c-soon">ใกล้ถึง Due ${k.so.size}</span>` : ''}`, ST.PENDING)}
+          ${leg('dn', 'ส่งแล้ว', dn, `${k.dn.p.size} Pallet · ${k.dn.r.size} Rack${k.dn.late ? ` · <span class="c-late">ช้า ${k.dn.late} แถว</span>` : ''}`, 'DONE')}
+          ${leg('sc', 'ยิงแล้ว ยังไม่ขึ้นรถ', k.sc.p.size, `${k.sc.b.toLocaleString()} กล่อง · นับรวมในเลยกำหนด / รอส่ง`, 'SCAN')}
+        </div>
       </div>
-      <div class="prog" title="สัดส่วน Pallet+Rack">
-        <span style="width:${(tot(k.dn) / T) * 100}%;background:var(--c-done)"></span>
-        <span style="width:${(tot(k.pe) / T) * 100}%;background:var(--c-pending)"></span>
-        <span style="width:${(tot(k.od) / T) * 100}%;background:var(--c-overdue)"></span>
-      </div>
+      <div class="wh-foot"><span>🚚 รถ <b>${t.used}</b> คัน</span><span class="c-dn">ออกแล้ว <b>${t.left}</b></span><span>เหลือ <b>${t.remain}</b></span>
+        ${t.od ? `<span class="c-od">เลย Due <b>${t.od}</b></span>` : ''}${t.late ? `<span class="c-late">ออกช้า <b>${t.late}</b></span>` : ''}</div>
     </div>`;
   }).join('');
+  $$('#kpis .lg-row').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); S.status = a.dataset.st; S.win = null; go('detail'); }));
+}
+// overview: trucks by status as one stacked bar (each truck in exactly one group); click a group = truck page filtered
+function ovTruckBar(trips) {
+  const esc = trips.filter((x) => isEsc(x)), od = trips.filter((x) => x.od && !isEsc(x) && !x.loading);
+  const G = [
+    ['on', 'ออกแล้ว · ตรงเวลา', trips.filter((x) => x.left && !x.late), 'LEFT'],
+    ['late', 'ออกแล้ว · ช้า', trips.filter((x) => x.left && x.late), 'LATE'],
+    ['load', 'ขึ้นรถแล้ว · รอ ILMS', trips.filter((x) => x.loading && !isEsc(x)), 'LOADING'],
+    ['soon', `ใกล้ถึง Due ≤ ${SOON_MIN} นาที`, trips.filter((x) => x.soon), 'SOON'],
+    ['pend', 'ยังไม่ถึง Due', trips.filter((x) => !x.left && !x.od && !x.soon && !x.loading), 'REMAIN'],
+    ['od', 'เลย Due ยังไม่ออก', od, 'OD'],
+    ['esc', `เลย Due เกิน ${escMin()} นาที`, esc, 'OD'],
+  ];
+  const n = trips.length || 1, left = trips.filter((x) => x.left).length;
+  return `<div class="tb-head"><div><b class="tb-big">${trips.length}</b> คัน <span class="muted">ใช้ทั้งหมด (ตาม Shipping No.)</span></div>
+      <div class="tb-pct"><b>${Math.round((left / n) * 100)}%</b> ออกแล้ว <span class="muted">${left} / ${trips.length}</span></div></div>
+    <div class="tb-bar">${G.filter((g) => g[2].length).map(([c, l, a]) => `<span class="tb-${c}" style="flex:${a.length}" title="${l} ${a.length} คัน">${a.length}</span>`).join('')}</div>
+    <div class="tb-leg">${G.map(([c, l, a, f]) => `<a href="#" class="tb-chip${a.length ? '' : ' zero'}" data-tst="${f}"><i class="tb-${c}"></i>${l} <b>${a.length}</b></a>`).join('')}</div>`;
+}
+// overview: small hourly chart (from the Plan page computation): bars = Plan trucks, dots = trucks that left
+function renderOvPlan() {
+  const el = $('#ovPlan');
+  const x = S.planExport;
+  if (!el) return;
+  if (!x || !x.list.length) { el.innerHTML = '<p class="hint">ยังไม่มีข้อมูล Plan</p>'; return; }
+  const L = x.list.filter((h) => !h.before), now = new Date();
+  const sum = (h, f) => x.scope.reduce((a, w) => a + f(h.wh[w]), 0);
+  const W = Math.max(320, (el.clientWidth || 520) - 2), H = 150, P = { l: 22, r: 6, t: 14, b: 22 };
+  const vmax = Math.max(1, ...L.map((h) => Math.max(sum(h, (c) => c.n), sum(h, (c) => c.left.size))));
+  const step = (W - P.l - P.r) / Math.max(1, L.length), bw = Math.min(18, step * 0.6);
+  const y = (v) => P.t + (H - P.t - P.b) * (1 - v / vmax), cx = (i) => P.l + step * i + step / 2;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" role="img" aria-label="รถรายชั่วโมง">
+    <line x1="${P.l}" x2="${W - P.r}" y1="${y(0)}" y2="${y(0)}" class="grid"/><text x="${P.l - 4}" y="${y(vmax) + 4}" class="ax" text-anchor="end">${vmax}</text>
+    ${L.map((h, i) => {
+      const n = sum(h, (c) => c.n), lf = sum(h, (c) => c.left.size), cur = now >= h.t && now < new Date(h.t.getTime() + 3600000);
+      return `${cur ? `<rect x="${cx(i) - step / 2}" y="${P.t - 10}" width="${step}" height="${H - P.t - P.b + 10}" class="now"/>` : ''}
+        <rect x="${cx(i) - bw / 2}" y="${y(n)}" width="${bw}" height="${Math.max(0, H - P.b - y(n))}" rx="3" class="bar"><title>${x.hourLbl(h)} Plan ${n} · ออกแล้ว ${lf}</title></rect>
+        ${n ? `<text x="${cx(i)}" y="${y(n) - 3}" class="bv" text-anchor="middle">${n}</text>` : ''}
+        ${lf ? `<circle cx="${cx(i)}" cy="${y(lf)}" r="3.5" class="dot"/>` : ''}
+        ${i % Math.ceil(L.length / 13) === 0 ? `<text x="${cx(i)}" y="${H - 6}" class="ax" text-anchor="middle">${String(h.t.getHours()).padStart(2, '0')}</text>` : ''}`;
+    }).join('')}</svg>
+    <div class="plan-legend"><span><i class="lg-bar"></i>รถตาม Plan</span><span><i class="lg-dot"></i>ออกแล้ว</span><span class="muted">แถบเหลือง = ชั่วโมงนี้</span></div>`;
 }
 
 // trucks column counts only the trucks shown on the truck page (by the shift in their Shipping No.),
@@ -780,7 +835,8 @@ function renderOverview(rows, trips) {
       ${soonUnits ? `<span>งานยังไม่ส่ง <b>${soonUnits}</b> หน่วย (Pallet + Rack)</span>` : ''}`;
     $$('#ovSoon a').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); openTruck(a.dataset.sn); }));
   }
-  $('#ovTruckTiles').innerHTML = trips.length ? truckTiles({ ...tripTotals(trips), esc: trips.filter(isEsc).length }) : '<p class="hint">ยังไม่มีข้อมูลรถในช่วงเวลานี้</p>';
+  $('#ovTruckTiles').innerHTML = trips.length ? ovTruckBar(trips) : '<p class="hint">ยังไม่มีข้อมูลรถในช่วงเวลานี้</p>';
+  $$('#ovTruckTiles .tb-chip').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); S.truckSt = a.dataset.tst; go('trucks'); }));
   const wins = byWindow(rows).filter((x) => x.od.p.size + x.od.r.size > 0)
     .sort((a, b) => (b.od.p.size + b.od.r.size) - (a.od.p.size + a.od.r.size)).slice(0, 8);
   const max = wins.length ? wins[0].od.p.size + wins[0].od.r.size : 1;

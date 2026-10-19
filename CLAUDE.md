@@ -140,7 +140,11 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    day (D/N bars), on-time % line, table per shift, late reasons. On time = ILMS departure ≤ Due start, where Due start is
    the truck's `ds` but no earlier than its shift start (old backlog rows would make nearly every truck "late" by days);
    trucks without ILMS / ds are left out of the %. Plan page also shows running totals Plan vs left ("สะสม Plan / ออกจริง").
-14. **Other features**: data cards show file time (`meta.fileAt` = file.lastModified) + upload time ·
+14. **Overview dashboard** (19/10/2026): per WH a donut (shipped / pending / overdue pallets+racks, % shipped in the
+   centre) with a clickable legend (→ detail page filtered) and a truck footer; truck status as one stacked bar (each truck in
+   one group: left on time / late, loading, soon, not due, overdue, overdue > escMin; chips → truck page filtered) next to a
+   small hourly Plan-vs-left chart (from the Plan computation); then top overdue Windows and trucks not left.
+   **Other features**: data cards show file time (`meta.fileAt` = file.lastModified) + upload time ·
    browser alerts per device (🔔 button, localStorage `sc_notify`): Notification + beep when a truck newly becomes "soon" or
    overdue, only while viewing now; what is on screen at open / WH or mode change is not alerted (`notifyCheck`) ·
    shift report (data page, per PC, no login): Excel `ShiftReport_<YYYYMMDD><D|N>.xlsx` (sheets สรุปกะ / รถ / ค้างส่ง) written to
