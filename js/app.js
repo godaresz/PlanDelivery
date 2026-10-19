@@ -488,8 +488,8 @@ function render(quiet = false) {
     else if (!calm.matches) flashChanges(before);
   }
 }
-// live update: a number that changed since the last render (1-min tick / another device's upload) briefly glows
-// (went up = amber, went down = blue), so a TV screen shows what just moved
+// live update: on the silent 1-minute refresh a number that changed since the last render briefly glows
+// (went up = amber, went down = blue), so a TV screen shows what just moved; new data from an upload counts up instead
 const FLASH_SEL = '[data-k], #nav .cnt';
 function snapNumbers() {
   const m = new Map();
@@ -1287,26 +1287,35 @@ async function writeUploadLog(kind, file, auto, ok, msg) {
   try {
     const cur = (await store.loadUploadLog()) || {};
     const ids = Object.keys(cur).filter((k) => k.startsWith('u')).sort();
-    const patch = { [`u${Date.now()}`]: { k: kind, f: file.name, ft: file.lastModified || null, at: new Date().toISOString(),
-      by: (S.user && S.user.email) || '', auto: !!auto, ok, msg: String(msg || '').slice(0, 300) } };
+    const entry = { k: kind, f: file.name, ft: file.lastModified || null, at: new Date().toISOString(),
+      by: (S.user && S.user.email) || '', auto: !!auto, ok, msg: String(msg || '').slice(0, 300) };
+    // the same file failing again (auto-update retries every few minutes): bump the newest entry instead of adding one
+    const lastId = ids[ids.length - 1], last = lastId && cur[lastId];
+    if (!ok && last && !last.ok && last.f === entry.f && last.ft === entry.ft && last.msg === entry.msg) {
+      await store.logUpload({ [lastId]: { ...entry, n: (last.n || 1) + 1 } });
+      S.log = null; renderUploadLog(true); return;
+    }
+    const patch = { [`u${Date.now()}`]: entry };
     ids.slice(0, Math.max(0, ids.length + 1 - LOG_KEEP)).forEach((k) => { patch[k] = null; }); // keep the newest LOG_KEEP
     await store.logUpload(patch);
-    S.log = null; // re-read when the data page is shown
+    S.log = null; renderUploadLog(true); // re-read now (a read started before the write would be stale)
   } catch (e) { console.warn('upload log', e); } // the log must never block an upload
 }
 async function renderUploadLog(force = false) {
   const el = $('#tblLog');
   if (!el || S.page !== 'data') return;
   if (!S.log || force) {
-    if (S.logLoading) return;
-    S.logLoading = true;
-    try { S.log = (await store.loadUploadLog()) || {}; } catch { S.log = {}; } finally { S.logLoading = false; }
+    const gen = (S.logGen = (S.logGen || 0) + 1); // only the newest read is shown
+    let log;
+    try { log = (await store.loadUploadLog()) || {}; } catch { log = {}; }
+    if (gen !== S.logGen) return;
+    S.log = log;
   }
   const rows = Object.entries(S.log).filter(([k]) => k.startsWith('u')).map(([, v]) => v).sort((a, b) => String(b.at).localeCompare(String(a.at)));
   el.innerHTML = rows.length ? `<thead><tr><th>เวลาอัปโหลด</th><th>ประเภท</th><th>ไฟล์</th><th>เวลาไฟล์</th><th>โดย</th><th>ผล</th><th>รายละเอียด</th></tr></thead>
     <tbody>${rows.map((r) => `<tr><td class="t">${fmtShowFull(new Date(r.at))}</td><td>${KIND_TH[r.k] || esc(r.k)}</td><td>${esc(r.f)}</td>
       <td class="t">${r.ft ? fmtShow(new Date(r.ft)) : '-'}</td><td>${r.auto ? '🔄 อัตโนมัติ' : '👤'} ${esc(r.by || '')}</td>
-      <td>${r.ok ? '<span class="pill done_on">สำเร็จ</span>' : '<span class="pill overdue">ไม่สำเร็จ</span>'}</td><td class="log-msg">${esc(r.msg)}</td></tr>`).join('')}</tbody>`
+      <td>${r.ok ? '<span class="pill done_on">สำเร็จ</span>' : `<span class="pill overdue">ไม่สำเร็จ${r.n > 1 ? ` ×${r.n}` : ''}</span>`}</td><td class="log-msg">${esc(r.msg)}</td></tr>`).join('')}</tbody>`
     : '<tbody><tr><td class="hint">ยังไม่มีประวัติ (เริ่มบันทึกตั้งแต่การอัปโหลดครั้งถัดไป)</td></tr></tbody>';
 }
 // data volume: what each viewer downloads per upload (compressed payloads), against the Spark free download quota
@@ -1697,12 +1706,8 @@ async function onUpload(e) {
     label.removeAttribute('disabled');
   }
 }
-// same rows regardless of order (a merge puts kept confirmed rows after the file's rows)
-function sameRows(a, b) {
-  if (a.length !== b.length) return false;
-  const canon = (rows) => rows.map((r) => JSON.stringify(r)).sort().join('\n');
-  return canon(a) === canon(b);
-}
+// rows as one string regardless of order (a merge puts kept confirmed rows after the file's rows); equal = nothing to save
+const rowsCanon = (rows) => rows.map((r) => JSON.stringify(r)).sort().join('\n');
 // upload one file and keep a log entry (who / when / which file / result) in the shared doc "uploadlog"
 async function uploadFile(kind, file, auto = false) {
   S.upMsg = null;
@@ -1725,7 +1730,7 @@ async function uploadFileRun(kind, file, auto = false) {
     const m = mergeIlms(oldIlms, res.rows);
     const ilmsMeta = { fileName: file.name, fileAt: file.lastModified || null, count: m.rows.length, fromFile: res.rows.length };
     // nothing changed: only the meta doc is updated, so viewers don't download the same data again
-    if (latest.ilms && latest.ilms.meta && sameRows(m.rows, oldIlms)) await store.touchMeta('ilms', ilmsMeta);
+    if (latest.ilms && latest.ilms.meta && rowsCanon(m.rows) === rowsCanon(oldIlms)) await store.touchMeta('ilms', ilmsMeta);
     else await store.saveIlms(m.rows, ilmsMeta);
     toast(S.upMsg = `อัปเดต ILMS แล้ว: ${res.rows.length.toLocaleString()} คันจากไฟล์ (WH1/WH4)` + (res.other ? ` · ข้ามคลังอื่น ${res.other}` : '')
       + (m.skipped ? ` · ข้ามที่ COMPLETE แล้ว ${m.skipped.toLocaleString()}` : '')
@@ -1768,6 +1773,7 @@ async function uploadFileRun(kind, file, auto = false) {
         if (!archived.has(r.k)) archived.set(r.k, []);
         archived.get(r.k).push(r);
       }
+      const oldCanon = rowsCanon(oldRows); // before merge: mergeWms keeps stored rows by reference and lockDues stamps them in place
       const m = mergeWms(oldRows, split[wh], keepDays, new Date(), archived);
       // newly confirmed rows: lock the due used now (a later DataSlide / rule change won't move it)
       lockDues(m.rows, slideNow, rulesNow); lockDues(m.toArchive, slideNow, rulesNow);
@@ -1783,7 +1789,7 @@ async function uploadFileRun(kind, file, auto = false) {
       const ln = truckAccLinks(acc), old = (hist.links && hist.links[wh]) || { parts: {}, sups: {} };
       hist.links = { ...(hist.links || {}), [wh]: { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } } };
       const wmsMeta = { fileName: file.name, fileAt: file.lastModified || null, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped };
-      if (latest[wh] && latest[wh].meta && !m.toArchive.length && sameRows(m.rows, oldRows)) await store.touchMeta(wh, wmsMeta);
+      if (latest[wh] && latest[wh].meta && !m.toArchive.length && rowsCanon(m.rows) === oldCanon) await store.touchMeta(wh, wmsMeta);
       else await store.saveWms(wh, m.rows, wmsMeta);
       msgs.push(`${wh} ${split[wh].length.toLocaleString()} แถว` + (m.skipped ? ` · ข้ามที่ Confirm แล้ว ${m.skipped.toLocaleString()}` : '')
         + (m.kept ? ` · เก็บที่ส่งแล้วจากรอบก่อน ${m.kept.toLocaleString()}` : '')
@@ -2104,16 +2110,14 @@ function bind() {
     try {
       const list = await parseWindowTimes(f);
       if (!list.length) throw new Error('ไม่พบแถวที่มี Window Name และเวลา');
+      const first = new Map(); // Window -> time of its first row
+      for (const { w, time } of list) if (!first.has(w)) first.set(w, time);
       const byTime = new Map();
-      for (const { w, time } of list) { if (!byTime.has(time)) byTime.set(time, new Set()); byTime.get(time).add(w); }
-      const dup = list.length - new Set(list.map((x) => x.w)).size;
-      if (!confirm(`นำเข้า ${new Set(list.map((x) => x.w)).size} Window (${byTime.size} เวลา) แทนกฎ Window เดิมทั้งหมด?${dup ? `\n(มี Window ซ้ำ ${dup} แถว — ใช้เวลาของแถวแรก)` : ''}\nกด "บันทึกกฎ" เพื่อบันทึก`)) return;
+      for (const [w, time] of first) { if (!byTime.has(time)) byTime.set(time, []); byTime.get(time).push(w); }
+      const dup = list.length - first.size;
+      if (!confirm(`นำเข้า ${first.size} Window (${byTime.size} เวลา) แทนกฎ Window เดิมทั้งหมด?${dup ? `\n(มี Window ซ้ำ ${dup} แถว — ใช้เวลาของแถวแรก)` : ''}${list.skipped ? `\n(ข้าม ${list.skipped} แถวที่อ่านเวลาไม่ได้)` : ''}\nกด "บันทึกกฎ" เพื่อบันทึก`)) return;
       readRules();
-      const seen = new Set(), groups = [];
-      for (const [time, ws] of [...byTime].sort((a, b) => a[0].localeCompare(b[0]))) {
-        const windows = [...ws].filter((w) => !seen.has(w)).sort(); windows.forEach((w) => seen.add(w));
-        if (windows.length) groups.push({ type: 'window', windows, time });
-      }
+      const groups = [...byTime].sort((a, b) => a[0].localeCompare(b[0])).map(([time, ws]) => ({ type: 'window', windows: ws.sort(), time }));
       draft.groups = draft.groups.filter((g) => g.type !== 'window').concat(groups);
       drawRules(); $('#rulesErr').textContent = '';
     } catch (err) { $('#rulesErr').textContent = 'นำเข้าไม่สำเร็จ: ' + err.message; }

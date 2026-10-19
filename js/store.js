@@ -183,6 +183,9 @@ async function loadChunked(prefix, tries = 3) {
     }
     json += c.data;
   }
+  if (json && meta.enc === 'gz' && typeof DecompressionStream === 'undefined') {
+    throw new Error('เบราว์เซอร์นี้เก่าเกินไป อ่านข้อมูลที่บีบอัดไม่ได้ — อัปเดต Chrome / Edge / Safari (16.4 ขึ้นไป)');
+  }
   if (json && meta.enc) json = await unpackPayload(json, meta.enc);
   const data = json ? JSON.parse(json) : null;
   cache[prefix] = { version: meta.version, data };

@@ -180,7 +180,19 @@ test('CSV: WMS file keeps 24-digit RFID as text and uses the 2nd Truck License c
 test('Window time table import: Window Name + Time / เวลา columns, Excel-style times, blank rows skipped', async () => {
   const csv = 'note,,\nWindow Name,Time,x\n1d28,15:30,\n1D29,0.6458333333,\n,16:00,\n1D30,abc,\n';
   const list = await parseWindowTimes(new File([csv], 'w.csv'));
-  assert.deepEqual(list, [{ w: '1D28', time: '15:30' }]); // CSV text "0.6458…" is not a time (Excel numbers come from .xlsx)
+  assert.deepEqual([...list], [{ w: '1D28', time: '15:30' }]); // CSV text "0.6458…" is not a time (Excel numbers come from .xlsx)
+  assert.equal(list.skipped, 2);
+  const dot = await parseWindowTimes(new File(['Window Name,Time\n1D27,15.30\n'], 'd.csv'));
+  assert.deepEqual([...dot], [{ w: '1D27', time: '15:30' }]); // "15.30" typed with a dot
   const th = await parseWindowTimes(new File(['Window,เวลา\n4D10,8:05\n'], 't.csv'));
-  assert.deepEqual(th, [{ w: '4D10', time: '08:05' }]);
+  assert.deepEqual([...th], [{ w: '4D10', time: '08:05' }]);
+});
+
+test('6. WMS upload: a due stamped on a stored CONFIRMED row by lockDues is a change (must be saved, not meta-only)', () => {
+  const stored = [row({ k: 'A', cf: 1, sh: '2026-10-15 08:00', tr: 'T1' })]; // confirmed but not stamped yet
+  const canon = (rows) => rows.map((r) => JSON.stringify(r)).sort().join('\n');
+  const before = canon(stored);
+  const m = mergeWms(stored, [row({ k: 'A', cf: 1, sh: '2026-10-15 08:00', tr: 'T1' })], 7, D('2026-10-15 12:00'));
+  assert.equal(lockDues(m.rows, new Map(), []), 1);
+  assert.notEqual(canon(m.rows), before); // compared with the canonical form taken BEFORE the merge
 });

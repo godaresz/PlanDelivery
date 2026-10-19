@@ -281,7 +281,8 @@ export async function parseWmsFile(file) {
 // Window time table (rules dialog import): columns "Window Name" (or "Window") + "Time" ("Due Time" / "เวลา").
 // Returns [{ w: '1D28', time: '15:30' }]; rows without a readable time are skipped.
 export async function parseWindowTimes(file) {
-  const rows = await readTable(file);
+  let rows = await readTable(file, ['Window Name']);
+  if (!rows.some((r) => r.map(norm).includes('windowname'))) rows = await readTable(file, ['Window']); // table on another sheet
   let h = -1, cw = -1, ct = -1;
   for (let i = 0; i < Math.min(rows.length, 15) && h < 0; i++) {
     const hd = rows[i].map(norm);
@@ -291,9 +292,15 @@ export async function parseWindowTimes(file) {
   }
   if (h < 0) throw new Error('ไม่พบหัวคอลัมน์ Window Name และ Time (หรือ เวลา) ในไฟล์');
   const out = [];
+  out.skipped = 0;
   for (let i = h + 1; i < rows.length; i++) {
-    const w = str(rows[i][cw]).toUpperCase(), t = timePart(rows[i][ct]);
-    if (!w || t === null) continue;
+    const w = str(rows[i][cw]).toUpperCase(), v = rows[i][ct];
+    if (!w) continue;
+    let t;
+    if (typeof v === 'number' && v >= 1 && v < 24) t = Math.floor(v) * 60 + Math.round((v % 1) * 100); // typed 15.30 = h.mm
+    else if (/^\s*\d{1,2}\.\d{2}\s*$/.test(String(v))) t = timeFromText(String(v).replace('.', ':'));
+    else t = timePart(v);
+    if (t === null || t === undefined || !(t >= 0 && t < 1440) || (typeof v === 'number' && v >= 1 && (v % 1) * 100 >= 59.5)) { out.skipped++; continue; }
     out.push({ w, time: `${pad(Math.floor(t / 60))}:${pad(t % 60)}` });
   }
   return out;
