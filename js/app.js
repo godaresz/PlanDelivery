@@ -1322,16 +1322,16 @@ async function renderUploadLog(force = false) {
 function renderVolume() {
   const el = $('#volBody');
   if (!el || !S.data) return;
-  const mb = (b) => (b / 1048576).toFixed(b < 1048576 ? 2 : 1) + ' MB';
+  const mb = (b) => (b < 1048576 ? `${Math.max(1, Math.round(b / 1024)).toLocaleString()} KB` : `${(b / 1048576).toFixed(1)} MB`);
   const items = [['DataSlide', S.data.slide.meta], ['WMS WH1', S.data.WH1.meta], ['WMS WH4', S.data.WH4.meta], ['ILMS', S.data.ilms.meta], ['สรุปรถ (Est / KPI)', S.data.truckhist.meta]];
   const size = (m) => (m ? m.bytes || null : null);
   const perWms = (size(S.data.WH1.meta) || 0) + (size(S.data.WH4.meta) || 0) + (size(S.data.truckhist.meta) || 0);
   const perIlms = size(S.data.ilms.meta) || 0, per = 1440 / autoMin();
   const day = (perWms + perIlms) * per, quotaDay = (10 * 1073741824) / 30;
   const unknown = items.some(([, m]) => m && !m.bytes);
-  el.innerHTML = `<table class="tbl mini"><thead><tr><th>ข้อมูล</th><th class="n">ขนาดที่ดาวน์โหลด</th><th class="n">ขนาดจริง (JSON)</th><th>บีบอัด</th></tr></thead>
+  el.innerHTML = `<div class="table-wrap"><table class="tbl mini"><thead><tr><th>ข้อมูล</th><th class="n">ขนาดที่ดาวน์โหลด</th><th class="n">ขนาดจริง (JSON)</th><th>บีบอัด</th></tr></thead>
     <tbody>${items.map(([l, m]) => `<tr><td>${l}</td><td class="n">${size(m) ? mb(size(m)) : '<span class="z">-</span>'}</td>
-      <td class="n">${m && m.raw ? mb(m.raw) : '<span class="z">-</span>'}</td><td>${m ? (m.enc === 'gz' ? `<span class="pill done_on">gzip ${Math.round((m.bytes / m.raw) * 100)}%</span>` : '<span class="pill pending">ยังไม่บีบอัด</span>') : ''}</td></tr>`).join('')}</tbody></table>
+      <td class="n">${m && m.raw ? mb(m.raw) : '<span class="z">-</span>'}</td><td>${m ? (m.enc === 'gz' ? `<span class="pill done_on">gzip ${Math.round((m.bytes / m.raw) * 100)}%</span>` : '<span class="pill pending">ยังไม่บีบอัด</span>') : ''}</td></tr>`).join('')}</tbody></table></div>
     <p class="hint">อัปโหลด WMS 1 ครั้ง แต่ละเครื่องที่เปิดเว็บอยู่ดาวน์โหลดใหม่ประมาณ <b>${mb(perWms)}</b> · ILMS <b>${mb(perIlms)}</b> ·
       ถ้าอัปเดตทุก ${autoMin()} นาที เครื่องที่เปิดค้างทั้งวันใช้ประมาณ <b>${mb(day)}/วัน</b> ·
       โควตาดาวน์โหลดฟรีของ Firebase ≈ 10 GB/เดือน (≈ ${mb(quotaDay)}/วัน) → เปิดค้างพร้อมกันได้ประมาณ <b>${day ? Math.max(1, Math.floor(quotaDay / day)) : '-'} เครื่อง</b>
