@@ -39,6 +39,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
 - `js/app.js` — UI (Thai labels), uploads, filters, rules dialog, Excel export.
   Pages via URL hash: `#overview`, `#window`, `#trucks`, `#est`, `#plan`, `#check`, `#kpi`, `#detail`, `#data` (uploads + rules).
   Filter bar is shared (hidden on `#data` and `#kpi`).
+- Branding: LINEX logo `icons/linex.png` (from the gatepass project) in the header and footer; "Made by Suwarot" in the
+  header subtitle and footer.
 - `sw.js` + `manifest.webmanifest` + `icons/` — installable app (PWA). Network first (a deploy shows at once), cache only
   when offline; registered only on https.
 - `tests/logic.test.mjs` — business-rule tests (`node --test 'tests/*.test.mjs'`), also run by GitHub Actions on every push.
