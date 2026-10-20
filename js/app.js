@@ -1052,6 +1052,8 @@ function renderPlan(all, scope, trips) {
     const k = { key: el.dataset.pk, mode: el.dataset.pm };
     S.planSel = S.planSel && S.planSel.key === k.key && S.planSel.mode === k.mode ? null : k; // click again = close
     render(true); if (S.planSel) $('#planHour').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const again = $(`#planChart [data-pk="${k.key}"][data-pm="${k.mode}"]`); // keyboard: keep focus on the same item
+    if (again && document.activeElement === document.body) again.focus({ preventScroll: true });
   }));
   renderPlanHour();
   const sc = $('#planChart .plan-scroll'); if (sc && keepX) sc.scrollLeft = keepX;
@@ -1313,7 +1315,7 @@ async function writeUploadLog(kind, file, auto, ok, msg) {
 }
 async function renderUploadLog(force = false) {
   const el = $('#tblLog');
-  if (!el || S.page !== 'data') return;
+  if (!el || S.page !== 'data' || !S.user) return; // signed-in users only (firestore.rules)
   if (!S.log || force) {
     const gen = (S.logGen = (S.logGen || 0) + 1); // only the newest read is shown
     let log;
@@ -1728,12 +1730,16 @@ function exclusive(fn) {
   return p;
 }
 // a new deploy also reaches screens that stay open for days (TV / auto-upload PC): every 10 min compare the app file's
-// ETag / Last-Modified; when it changed and nothing is running (no upload job, no dialog open) the page reloads itself
+// ETag / Last-Modified (every app file); when one changed and nothing is running (no upload job, no dialog open) the page reloads itself
+const APP_FILES = ['index.html', 'styles.css', 'js/app.js', 'js/logic.js', 'js/parse.js', 'js/store.js'];
 async function deployCheck() {
   try {
-    const r = await fetch('js/app.js', { method: 'HEAD', cache: 'no-store' });
-    const tag = r.ok && (r.headers.get('etag') || r.headers.get('last-modified'));
-    if (!tag) return;
+    const tags = await Promise.all(APP_FILES.map(async (f) => {
+      const r = await fetch(f, { method: 'HEAD', cache: 'no-store' });
+      return r.ok ? r.headers.get('etag') || r.headers.get('last-modified') || '' : '';
+    }));
+    if (tags.some((t) => !t)) return;
+    const tag = tags.join('|');
     if (!S.appTag) { S.appTag = tag; return; }
     if (tag !== S.appTag && !S.jobs && !(autoUp && autoUp.busy) && !document.querySelector('dialog[open]')) location.reload();
   } catch { /* offline: try next time */ }
@@ -2444,12 +2450,18 @@ async function main() {
   let rt;
   store.onChange(() => { clearTimeout(rt); rt = setTimeout(reload, 400); });
   // live listener lost (permission / quota / network): say so instead of silently showing old numbers
-  if (store.onStatus) store.onStatus((ok) => { $('#liveTag').hidden = ok; document.body.classList.toggle('offline', !ok); });
+  // live data lost: a listener failed (permission / quota) or the browser is offline (Firestore then serves its cache silently)
+  let liveOk = true;
+  const drawLive = () => { const ok = liveOk && navigator.onLine; $('#liveTag').hidden = ok; document.body.classList.toggle('offline', !ok); };
+  if (store.onStatus) store.onStatus((ok) => { liveOk = ok; drawLive(); });
+  window.addEventListener('online', drawLive); window.addEventListener('offline', drawLive); drawLive();
   // keyboard: clickable rows / chips / tiles / chart items open with Enter or Space
   document.addEventListener('keydown', (e) => {
     const el = e.target;
     if ((e.key === 'Enter' || e.key === ' ') && el.matches && el.matches('tr.clickable, .bar-row, [data-pk], .chk-tile, .tb-chip, .lg-row')) {
-      e.preventDefault(); el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      e.preventDefault();
+      // a cancelable click: the item's own preventDefault then stops the href="#" jump (SVG items have no .click())
+      if (typeof el.click === 'function') el.click(); else el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     }
   });
   setInterval(deployCheck, 600000); deployCheck();

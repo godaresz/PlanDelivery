@@ -29,18 +29,19 @@ export async function init() {
 // server (Spark: 50k reads/day). A snapshot that equals what was already loaded does not trigger a reload.
 // A listener that fails (permission / quota / network) is re-subscribed with a growing delay; onStatus tells the app.
 const WATCHED = ['slide_meta', 'WH1_meta', 'WH4_meta', 'ilms_meta', 'truckhist_meta', 'arch_index', 'rules', 'reasons'];
-const live = new Map(), liveSig = new Map();
+const live = new Map(), liveSig = new Map(), failed = new Set();
 let statusFn = () => {};
 export const onStatus = (fn) => { statusFn = fn; };
 function watch(id, delay = 15000) {
   fs.onSnapshot(fs.doc(db, COLLECTION, id), (snap) => {
     const d = snap.exists() ? snap.data() : null, sig = JSON.stringify(d);
-    live.set(id, d); statusFn(true);
+    live.set(id, d);
+    if (failed.delete(id)) statusFn(!failed.size); // this listener is back
     if (liveSig.get(id) === sig) return;
     liveSig.set(id, sig); emit();
-  }, (err) => {
-    live.delete(id); liveSig.delete(id); statusFn(false, err);
-    setTimeout(() => watch(id, Math.min(300000, delay * 2)), delay);
+  }, () => {
+    live.delete(id); liveSig.delete(id); failed.add(id); statusFn(false);
+    setTimeout(() => watch(id, Math.min(300000, delay * 2)), delay); // a successful re-subscribe starts again at 15 s
   });
 }
 
@@ -65,7 +66,8 @@ async function getDoc(id, fresh = false) {
   if (!fresh && live.has(id)) return live.get(id);
   const snap = await fs.getDoc(fs.doc(db, COLLECTION, id));
   const d = snap.exists() ? snap.data() : null;
-  if (WATCHED.includes(id)) liveSig.set(id, JSON.stringify(d)); // its first snapshot then won't reload again
+  // its first snapshot then won't reload again (not for a fresh read: a newer server copy must still reload this screen)
+  if (WATCHED.includes(id) && !fresh && !live.has(id)) liveSig.set(id, JSON.stringify(d));
   return d;
 }
 
@@ -190,7 +192,7 @@ const idbPut = (k, v) => idbReq('readwrite', (st) => st.put(v, k));
 const idbDel = (k) => idbReq('readwrite', (st) => st.delete(k));
 
 async function loadChunked(prefix, tries = 3) {
-  const meta = await getDoc(prefix + '_meta');
+  const meta = await getDoc(prefix + '_meta', tries < 3); // a retry asks the server: the listener copy may be behind
   if (!meta) return { meta: null, data: null };
   if (cache[prefix] && cache[prefix].version === meta.version) return { meta, data: cache[prefix].data };
   const saved = await idbGet(prefix);
