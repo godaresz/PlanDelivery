@@ -122,9 +122,9 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    or `Delivery Date` when that is blank (17/10/2026; row field `ds` = 'O' / 'D', truck tag "ILMS·DD" when Delivery Date was used;
    a COMPLETE-locked truck still takes a later file's Depart Origin once). Only WH1/WH4
    numbers kept; uploads merge by Truckplan No (newer wins unless the stored truck is `COMPLETE` = locked), never deleted.
-   Departure = ILMS time above if matched. Without ILMS (19/10/2026): a truck with shipped rows is "ขึ้นรถแล้ว · รอ ILMS"
-   (`loading`, not left) while its shift runs; after the shift ends WMS is the fallback (left at the last Shipping Time). Late (ออกช้า) = departure after
-   Due start (ILMS) / a row shipped after its due (WMS fallback). Remaining = not left; overdue = Due start passed.
+   Departure = ILMS time above if matched. **No ILMS time = the truck has NOT left** (agreed 20/10/2026, also after its shift
+   ended — no WMS fallback any more): a truck with shipped rows is "ขึ้นรถแล้ว · รอ ILMS" (`loading`, not left). Late (ออกช้า) =
+   ILMS departure after Due start. Remaining = not left; overdue = Due start passed.
 11. **Truck estimate (Est, page `#est`)**: open (not shipped) pallets in the current filter. Each pallet counts once
    (bucket of its earliest due; Dock|Window, Part No., Supplier of its first row). Buckets = due day × period ตี 00–05 /
    เช้า 06–11 / บ่าย 12–17 / ทุ่ม 18–23. Learning uses the truck history (`truckhist` v2: pallets/racks per Dock|Window

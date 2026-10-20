@@ -117,7 +117,7 @@ test('9. Shipping No. format: date + WH + D/N + trip; D 07:30â€“20:00, N 20:00â€
   assert.equal(fmtKey(n.start), '2026-10-14 20:00'); assert.equal(fmtKey(n.end), '2026-10-15 07:30');
   assert.equal(parseTrip('202613014D001'), null); assert.equal(parseTrip('ABC'), null);
 });
-test('10. truck departure: ILMS first; without ILMS "loaded, waiting for ILMS" during the shift, WMS after it', () => {
+test('10. truck departure: ILMS only; without an ILMS time the truck has not left (loaded, waiting for ILMS)', () => {
   const sn = '202610151D001';
   const rows = ev([row({ sn, cf: 1, sh: '2026-10-15 08:10', tr: 'T1', dd: '2026-10-15 08:00' }), row({ k: 'B', sn, dd: '2026-10-15 09:00' })], '2026-10-15 10:00');
   const ilms = new Map([[sn, { dt: D('2026-10-15 08:30') }]]);
@@ -126,7 +126,7 @@ test('10. truck departure: ILMS first; without ILMS "loaded, waiting for ILMS" d
   const [b] = byTrip(rows, new Map(), D('2026-10-15 10:00'));
   assert.equal(b.loading, true); assert.equal(b.left, false); assert.equal(b.od, true); assert.equal(b.odMin, 120);
   const [c] = byTrip(rows, new Map(), D('2026-10-15 21:00'));
-  assert.equal(c.left, true); assert.equal(c.src, 'WMS'); assert.equal(fmtKey(c.dep), '2026-10-15 08:10');
+  assert.equal(c.left, false); assert.equal(c.loading, true); assert.equal(c.dep, null); assert.equal(c.od, true); // shift over, still no ILMS
   assert.equal(tripTotals([a, b]).loading, 1);
 });
 test('5/9. pallets vs racks counted by distinct Pallet No. (RFID all zeros = Rack)', () => {

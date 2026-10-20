@@ -1078,7 +1078,7 @@ function dataChecks(all, scope, trips) {
   // 1. shift over, no ILMS time
   const noIlms = trips.filter((x) => x.info && now >= x.info.end && x.src !== 'ILMS');
   out.push({ id: 'noilms', icon: '🚚', title: 'จบกะแล้ว ยังไม่มีเวลาออกใน ILMS', unit: 'คัน',
-    desc: 'รถที่ยิงขึ้นแล้วใช้เวลา Shipping ล่าสุดของ WMS แทน (อาจไม่ตรงเวลาออกจริง) · รถที่ยังไม่ยิงขึ้นเลยถือว่ายังไม่ออก — ตรวจว่า ILMS อัปโหลดครบ / รถออกจริงหรือยัง',
+    desc: 'ไม่มีเวลาใน ILMS = ถือว่ารถยังไม่ออก (นับเป็นเลย Due) แม้ยิงขึ้นรถครบแล้ว — ตรวจว่า ILMS อัปโหลดครบ / รถออกจริงหรือยัง',
     items: noIlms.map((x) => ({ ...truckCols(x), 'สถานะ': x.done ? `ยิงขึ้นแล้ว (WMS ล่าสุด ${f(x.wmsLast)})` : 'ยังไม่ยิงขึ้นรถเลย', 'เหตุผล': reasonTxt(x.sn), _sn: x.sn })) });
   // 2. truck left (ILMS) but some of its rows are not shipped
   const left = new Map(trips.filter((x) => x.left && x.src === 'ILMS').map((x) => [x.sn, x]));

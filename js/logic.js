@@ -197,15 +197,14 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
       x.late = x.left && x.lateMin > 0;
       if (il.tr) x.trucks = new Set([il.tr]); // ILMS licence is the real plate; WMS may hold a code
     } else {
-      // no ILMS: pallets scanned onto the truck do not mean it left. While its shift is running it is "loaded,
-      // waiting for ILMS"; once the shift is over WMS is the fallback (left at the last Shipping Time).
-      const shiftOver = !x.info || now >= x.info.end;
-      x.loading = x.done > 0 && !shiftOver;
-      x.src = x.done && shiftOver ? 'WMS' : '';
-      x.left = x.done > 0 && shiftOver;
-      x.dep = x.left ? x.wmsLast : null;
-      x.late = x.left && x.lateRows > 0;
-      x.lateMin = x.late ? x.maxLate : null;
+      // no ILMS departure time = the truck has NOT left (agreed 20/10/2026), even after its shift ended; pallets
+      // scanned onto it only make it "loaded, waiting for ILMS".
+      x.loading = x.done > 0;
+      x.src = '';
+      x.left = false;
+      x.dep = null;
+      x.late = false;
+      x.lateMin = null;
     }
     x.od = !x.left && !!x.dueStart && x.dueStart < now;
     x.odMin = x.od ? Math.floor((now - x.dueStart) / 60000) : null; // minutes past Due start (escalation)
