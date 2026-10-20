@@ -100,6 +100,22 @@ export function evaluate(rows, slideMap, rules, now) {
   });
 }
 
+// a shipped row on a truck that has no ILMS departure yet (agreed 20/10/2026) is NOT shipped: it counts as pending /
+// overdue by its due, flagged `wait` ("ขึ้นรถแล้ว รอ ILMS"). Rows without a readable Shipping No. keep the WMS status.
+export function waitIlms(rows, ilms, now) {
+  return rows.map((r) => {
+    if (!r.done || !r.sn || !parseTrip(r.sn)) return r;
+    const il = ilms.get(r.sn);
+    if (il && il.dt && il.dt <= now) return r;
+    const st = r.due && r.due < now ? ST.OVERDUE : ST.PENDING;
+    const lateMin = r.due ? Math.round((now - r.due) / 60000) : null;
+    const soonMin = st === ST.PENDING && r.due ? Math.ceil((r.due - now) / 60000) : null;
+    return { ...r, done: false, wait: true, st, lateMin, soonMin, soon: soonMin !== null && soonMin <= SOON_MIN };
+  });
+}
+// Est / Plan: pallets loaded on a truck already used its space, so they count as shipped there
+export const loadedAsDone = (rows) => rows.map((r) => (r.wait ? { ...r, done: true } : r));
+
 // group by window for the summary table
 export function byWindow(rows) {
   const g = new Map();
@@ -175,7 +191,7 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
     (r.rk ? x.r : x.p).add(r.pl || r.k);
     if (r.wh) (x.whU[r.wh] = x.whU[r.wh] || new Set()).add(r.pl || r.k); // pallets + racks per warehouse
     x.box += r.bx; x.rows++;
-    if (r.done) x.done++;
+    if (r.done || r.wait) x.done++; // loaded on the truck (waiting for ILMS counts too)
     if (r.st === ST.DONE_LATE) { x.lateRows++; x.maxLate = Math.max(x.maxLate, r.lateMin || 0); }
     if (r.due) {
       if (!x.dueStart || r.due < x.dueStart) x.dueStart = r.due;

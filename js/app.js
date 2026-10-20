@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, parseWindowTimes, normTime, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, waitIlms, loadedAsDone, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -411,7 +411,7 @@ function currentRows() {
     const active = (S.data && S.data[wh].data) || [];
     const have = new Set(active.map((r) => r.k));
     const rows = active.concat(days.flatMap((d) => (S.arch.get(`${wh}|${d}`) || []).filter((r) => !have.has(r.k))));
-    let ev = evaluate(rows, S.slideMap, S.rules.groups || [], now).map((r) => ({ ...r, wh }));
+    let ev = waitIlms(evaluate(rows, S.slideMap, S.rules.groups || [], now), S.ilmsMap || new Map(), now).map((r) => ({ ...r, wh }));
     full[wh] = ev;
     const snCache = new Map(); // parse each Shipping No. once
     const info = (sn) => { if (!snCache.has(sn)) snCache.set(sn, parseTrip(sn)); return snCache.get(sn); };
@@ -561,14 +561,15 @@ function renderAll() {
 
 function kpiCalc(rows) {
   const k = { so: new Set(), od: { p: new Set(), r: new Set(), b: 0 }, pe: { p: new Set(), r: new Set(), b: 0 },
-    sc: { p: new Set(), r: new Set(), b: 0, od: new Set() }, dn: { p: new Set(), r: new Set(), b: 0, late: 0 } };
+    sc: { p: new Set(), r: new Set(), b: 0, od: new Set() }, wt: { p: new Set(), r: new Set(), b: 0, od: new Set() }, dn: { p: new Set(), r: new Set(), b: 0, late: 0 } };
   for (const r of rows) {
     const pal = r.pl || r.k;
     const t = r.st === ST.OVERDUE ? k.od : r.st === ST.PENDING ? k.pe : k.dn;
     if (r.soon) k.so.add(pal);
     (r.rk ? t.r : t.p).add(pal); t.b += r.bx;
     if (r.st === ST.DONE_LATE) k.dn.late++;
-    if (r.scanned) { (r.rk ? k.sc.r : k.sc.p).add(pal); k.sc.b += r.bx; if (r.st === ST.OVERDUE) k.sc.od.add(pal); } // a pallet with any overdue row counts as overdue
+    if (r.scanned) { (r.rk ? k.sc.r : k.sc.p).add(pal); k.sc.b += r.bx; if (r.st === ST.OVERDUE) k.sc.od.add(pal); }
+    if (r.wait) { (r.rk ? k.wt.r : k.wt.p).add(pal); k.wt.b += r.bx; if (r.st === ST.OVERDUE) k.wt.od.add(pal); } // a pallet with any overdue row counts as overdue
   }
   return k;
 }
@@ -606,6 +607,7 @@ function renderKpis(all, scope) {
           ${leg('pe', 'รอส่ง', pe, `${k.pe.p.size} Pallet · ${k.pe.r.size} Rack · ${k.pe.b.toLocaleString()} กล่อง${k.so.size ? ` · <span class="c-soon">ใกล้ถึง Due ${k.so.size}</span>` : ''}`, ST.PENDING)}
           ${leg('dn', 'ส่งแล้ว', dn, `${k.dn.p.size} Pallet · ${k.dn.r.size} Rack${k.dn.late ? ` · <span class="c-late">ช้า ${k.dn.late} แถว</span>` : ''}`, 'DONE')}
           ${leg('sc', 'ยิงแล้ว ยังไม่ขึ้นรถ', tot(k.sc), `${k.sc.p.size} Pallet · ${k.sc.r.size} Rack · ${k.sc.b.toLocaleString()} กล่อง<br><span class="muted">อยู่ในเลยกำหนด ${k.sc.od.size} · รอส่ง ${tot(k.sc) - k.sc.od.size} (นับรวมข้างบนแล้ว)</span>`, 'SCAN')}
+          ${leg('wt', 'ขึ้นรถแล้ว รอ ILMS', tot(k.wt), `${k.wt.p.size} Pallet · ${k.wt.r.size} Rack · ${k.wt.b.toLocaleString()} กล่อง<br><span class="muted">อยู่ในเลยกำหนด ${k.wt.od.size} · รอส่ง ${tot(k.wt) - k.wt.od.size} (นับรวมข้างบนแล้ว · ยังไม่มีเวลาออกใน ILMS)</span>`, 'WAIT')}
         </div>
       </div>
       <div class="wh-foot"><span>🚚 รถ <b>${t.used}</b> คัน</span><span class="c-dn">ออกแล้ว <b>${t.left}</b></span><span>เหลือ <b>${t.remain}</b></span>
@@ -917,6 +919,7 @@ const f1 = (v) => (v === null || v === undefined ? '-' : v.toFixed(1));
 // buckets; whole trucks are shared out per WH by largest remainder (hours add up to the WH total, like the Est page).
 // Shown next to it: trucks with a Shipping No. whose Due start is in the hour, and trucks that left in the hour.
 function renderPlan(all, scope, trips) {
+  all = Object.fromEntries(Object.entries(all).map(([wh, rows]) => [wh, loadedAsDone(rows)]));
   const { start, end } = S.view;
   const dueMode = S.mode !== 'sn' && start && end;
   if (S.mode !== 'sn' && !dueMode) {
@@ -1503,6 +1506,7 @@ function estModel(wh, beforeKey = '') {
   return model;
 }
 function renderEst(all, scope) {
+  all = Object.fromEntries(Object.entries(all).map(([wh, rows]) => [wh, loadedAsDone(rows)]));
   const cmp = S.estMode === 'cmp';
   S.estExport = [];
   $$('#estMode .tab').forEach((t) => t.classList.toggle('active', t.dataset.em === (cmp ? 'cmp' : 'open')));
@@ -1650,18 +1654,20 @@ function statusPill(r) {
   else if (r.st === ST.DONE_LATE) h = `<span class="pill done_late${r.lateMin >= 15 ? ' big' : ''}">ส่งแล้ว ช้า ${dur(r.lateMin)}</span>`;
   else h = `<span class="pill done_on">ส่งแล้ว ตรงเวลา</span>`;
   if (r.scanned) h += `<span class="pill scan">ยิงแล้ว ยังไม่ขึ้นรถ</span>`;
+  if (r.wait) h += `<span class="pill wait">ขึ้นรถแล้ว รอ ILMS</span>`;
   return h;
 }
 
 const CHIPS = [
   ['ALL', 'ทั้งหมด'], ['OPEN', 'ยังไม่ส่งทั้งหมด'], [ST.OVERDUE, 'เลยกำหนด'], [ST.PENDING, 'รอส่ง'],
-  ['SCAN', 'ยิงแล้ว ยังไม่ขึ้นรถ'], ['DONE', 'ส่งแล้ว'],
+  ['SCAN', 'ยิงแล้ว ยังไม่ขึ้นรถ'], ['WAIT', 'ขึ้นรถแล้ว รอ ILMS'], ['DONE', 'ส่งแล้ว'],
 ];
 function detailRows(rows) {
   let r = rows;
   if (S.win) r = r.filter((x) => x.w === S.win);
   if (S.status === 'OPEN') r = r.filter((x) => !x.done);
   else if (S.status === 'SCAN') r = r.filter((x) => x.scanned);
+  else if (S.status === 'WAIT') r = r.filter((x) => x.wait);
   else if (S.status === 'DONE') r = r.filter((x) => x.done);
   else if (S.status !== 'ALL') r = r.filter((x) => x.st === S.status);
   const rank = { [ST.OVERDUE]: 0, [ST.PENDING]: 1, [ST.DONE_LATE]: 2, [ST.DONE_ON]: 3 };
@@ -1671,7 +1677,7 @@ function detailRows(rows) {
 function renderDetail(rows) {
   const cnt = (f) => rows.filter((x) => (!S.win || x.w === S.win) && f(x)).length;
   const counts = { ALL: cnt(() => true), OPEN: cnt((x) => !x.done), [ST.OVERDUE]: cnt((x) => x.st === ST.OVERDUE),
-    [ST.PENDING]: cnt((x) => x.st === ST.PENDING), SCAN: cnt((x) => x.scanned), DONE: cnt((x) => x.done) };
+    [ST.PENDING]: cnt((x) => x.st === ST.PENDING), SCAN: cnt((x) => x.scanned), WAIT: cnt((x) => x.wait), DONE: cnt((x) => x.done) };
   $('#stChips').innerHTML = CHIPS.map(([k, l]) => `<button class="chip${S.status === k ? ' on' : ''}" data-st="${k}">${l} (${counts[k]})</button>`).join('');
   $$('#stChips .chip').forEach((c) => c.addEventListener('click', () => { S.status = c.dataset.st; S.limit = 300; render(); }));
   $('#detailTitle').innerHTML = [
@@ -2100,7 +2106,7 @@ function bind() {
       'Pallet No.': r.pl, Type: r.rk ? 'Rack' : 'Pallet', 'Recept Box Count': r.bx, 'Due (WMS)': fmtShowFull(r.wmsDue),
       'Due used': fmtShowFull(r.due), 'Due source': r.src, 'Shipping Time': fmtShowFull(r.shipT), 'Shipping No.': r.sn, 'Truck License': r.tr,
       Status: r.st === ST.OVERDUE ? 'Overdue' : r.st === ST.PENDING ? 'Pending' : r.st === ST.DONE_LATE ? 'Shipped late' : 'Shipped on time',
-      'Scanned no truck': r.scanned ? 'Yes' : '', 'Late (min)': r.lateMin,
+      'Scanned no truck': r.scanned ? 'Yes' : '', 'Loaded, no ILMS': r.wait ? 'Yes' : '', 'Late (min)': r.lateMin,
     }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Detail');
@@ -2344,7 +2350,7 @@ function shiftReportBook(sh) {
   const ev = WHS.flatMap((wh) => {
     const active = (S.data && S.data[wh].data) || [], have = new Set(active.map((r) => r.k));
     const rows = active.concat(days.flatMap((d) => (S.arch.get(`${wh}|${d}`) || []).filter((r) => !have.has(r.k))));
-    return evaluate(rows, S.slideMap, S.rules.groups || [], now).map((r) => ({ ...r, wh }));
+    return waitIlms(evaluate(rows, S.slideMap, S.rules.groups || [], now), S.ilmsMap || new Map(), now).map((r) => ({ ...r, wh }));
   });
   const trips = byTrip(ev, S.ilmsMap, now).filter((x) => x.info && x.info.start.getTime() === sh.start.getTime());
   const due = ev.filter((r) => r.due && r.due >= sh.start && r.due < sh.end);

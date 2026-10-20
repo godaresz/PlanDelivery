@@ -74,6 +74,10 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
      applies only if no time-map rule matched.
 2. **Shipped / Complete** = Shipping Confirm `CONFIRMED`, or Shipping Time present AND shipping Truck License
    (the 2nd `Truck License` column, column Y) not blank and not all zeros.
+   **…but only once its truck left** (agreed 20/10/2026): a shipped row whose Shipping No. has no ILMS departure yet is
+   NOT shipped on the view (`waitIlms` after `evaluate`: `done:false`, `wait:true`, pending / overdue by its due; donut legend
+   + detail chip "ขึ้นรถแล้ว รอ ILMS"). Est / Plan treat these rows as loaded (`loadedAsDone`); the truck history, merge and
+   archive still use the WMS status. Rows without a readable Shipping No. keep the WMS status.
 3. **Scanned, not loaded (ยิงแล้ว ยังไม่ขึ้นรถ)** = Shipping Time present but no valid truck → counts as NOT shipped.
 4. Not shipped: due < now → Overdue (เลยกำหนด), else Pending (รอส่ง). Pending with due ≤ `rules.soonMin` (default 30, set in the rules dialog; `SOON_MIN`/`setSoonMin`) min away → "ใกล้ถึง Due"
    warning (amber pill, overview strip, KPI/tile counts, truck chip); a truck is "soon" when not left and Due start is ≤ 30 min away.

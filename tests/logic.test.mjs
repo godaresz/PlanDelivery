@@ -222,3 +222,18 @@ test('normTime: typed rule times become 24 h HH:MM', async () => {
   assert.equal(normTime('3:30 PM'), '');
   assert.equal(normTime(''), '');
 });
+
+test('10. shipped rows on a truck without an ILMS departure count as not shipped (wait)', async () => {
+  const { waitIlms, loadedAsDone } = await import('../js/logic.js');
+  const sn = '202610151D001';
+  const now = D('2026-10-15 10:00');
+  const rows = ev([row({ sn, cf: 1, sh: '2026-10-15 08:10', tr: 'T1', dd: '2026-10-15 08:00' }), row({ k: 'B', sn, cf: 1, sh: '2026-10-15 08:10', tr: 'T1', dd: '2026-10-15 11:00' })], '2026-10-15 10:00');
+  const [a, b] = waitIlms(rows, new Map(), now);
+  assert.equal(a.done, false); assert.equal(a.wait, true); assert.equal(a.st, ST.OVERDUE);
+  assert.equal(b.wait, true); assert.equal(b.st, ST.PENDING);
+  const [t] = byTrip([a, b], new Map(), now);
+  assert.equal(t.loading, true); assert.equal(t.left, false);
+  assert.equal(loadedAsDone([a])[0].done, true);
+  const [c] = waitIlms(rows, new Map([[sn, { dt: D('2026-10-15 09:00') }]]), now);
+  assert.equal(c.done, true); assert.equal(c.wait, undefined);
+});

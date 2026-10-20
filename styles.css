@@ -634,3 +634,7 @@ tr.clickable:focus-visible { outline-offset: -3px; }
 input.t24 { width: 74px; text-align: center; font-variant-numeric: tabular-nums; }
 .rmap input.t24 { width: 100%; }
 input.t24.bad { border-color: #EF4444; box-shadow: 0 0 0 3px #FEE2E2; }
+/* shipped rows on a truck without an ILMS departure (count as not shipped) */
+.pill.wait { background: #EDE9FE; color: #5B21B6; margin-left: 4px; }
+.lg-row.wt i { background: #8B5CF6; align-self: start; margin-top: 6px; }
+.lg-row.wt .lg-v { color: #6D28D9; }
