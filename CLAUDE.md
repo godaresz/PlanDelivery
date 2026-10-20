@@ -43,6 +43,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
   Open screens reload themselves after a deploy (`deployCheck`: ETag of js/app.js every 10 min, only when idle). `arch_index` is updated
   field by field (`mergeDoc`, setDoc merge) so concurrent devices don't overwrite each other. Viewers watch only the meta docs.
 - `js/app.js` — UI (Thai labels), uploads, filters, rules dialog, Excel export.
+  Rule times are typed 24 h text boxes (`timeIn` / `normTime`: "8:5", "0830", "8.30" → HH:MM), not `type=time` (follows the PC locale, AM/PM).
   Pages via URL hash: `#overview`, `#window`, `#trucks`, `#est`, `#plan`, `#check`, `#kpi`, `#detail`, `#data` (uploads + rules).
   Filter bar is shared (hidden on `#data` and `#kpi`).
 - Branding: LINEX logo `icons/linex.png` (from the gatepass project) in the header and footer; credit badge

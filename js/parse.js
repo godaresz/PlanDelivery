@@ -49,6 +49,16 @@ export function timeFromText(s, useLast = false) {
   return found;
 }
 
+// typed 24 h time -> "HH:MM" ("8:5", "0805", "8.05", "15", "15:30") or '' when not a valid time
+export function normTime(s) {
+  const t = String(s ?? '').trim();
+  if (!t) return '';
+  let m = t.match(/^(\d{1,2})\s*[:.\s]\s*(\d{1,2})$/) || t.match(/^(\d{1,2})(\d{2})$/) || t.match(/^(\d{1,2})()$/);
+  if (!m) return '';
+  const h = +m[1], mi = +(m[2] || 0);
+  return h < 24 && mi < 60 ? `${pad(h)}:${pad(mi)}` : '';
+}
+
 // any cell value -> Date or null
 export function toDateTime(v) {
   if (v === null || v === undefined || v === '') return null;

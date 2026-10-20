@@ -209,3 +209,16 @@ test('6. a stored CONFIRMED sibling of an archived line is never lost; an exact 
   const dupe = mergeWms([{ ...A }], [], 7, D('2026-10-20 12:00'), arch); // stored row identical to the archived one
   assert.equal(dupe.rows.length + dupe.toArchive.length, 0);
 });
+
+test('normTime: typed rule times become 24 h HH:MM', async () => {
+  const { normTime } = await import('../js/parse.js');
+  assert.equal(normTime('15:30'), '15:30');
+  assert.equal(normTime('8:5'), '08:05');
+  assert.equal(normTime('0830'), '08:30');
+  assert.equal(normTime('8.30'), '08:30');
+  assert.equal(normTime('7'), '07:00');
+  assert.equal(normTime('24:00'), '');
+  assert.equal(normTime('12:60'), '');
+  assert.equal(normTime('3:30 PM'), '');
+  assert.equal(normTime(''), '');
+});

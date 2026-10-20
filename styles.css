@@ -630,3 +630,7 @@ body.tv .site-foot { display: none; }
 body.offline .clock::before { background: #EF4444; animation: none; }
 :focus-visible { outline: 3px solid #93C5FD; outline-offset: 2px; border-radius: 6px; }
 tr.clickable:focus-visible { outline-offset: -3px; }
+/* 24 h time boxes in the rules dialog */
+input.t24 { width: 74px; text-align: center; font-variant-numeric: tabular-nums; }
+.rmap input.t24 { width: 100%; }
+input.t24.bad { border-color: #EF4444; box-shadow: 0 0 0 3px #FEE2E2; }

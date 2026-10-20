@@ -1,5 +1,5 @@
 import * as store from './store.js';
-import { parseSlideFile, parseWmsFile, parseIlmsFile, parseWindowTimes, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
+import { parseSlideFile, parseWmsFile, parseIlmsFile, parseWindowTimes, normTime, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
 import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -1997,7 +1997,7 @@ function drawRules() {
     <div class="rgroup-h"><span class="rtype">กำหนดเวลาตาม Window</span><b>Window Name</b>
       <input type="text" class="wins-in" value="${esc((g.windows || []).join(','))}" placeholder="เช่น 1D28">
       <button type="button" class="icon-btn admin-only" data-delg="${gi}" title="ลบกลุ่ม">✕</button></div>
-    <div class="shift-row">Due = <input type="time" class="win-time" value="${esc(g.time || '')}"> ของวันตาม Shipping No. (ยังไม่มีรถ = วันของ Due Date ใน WMS) · Order ที่อยู่ใน DataSlide ใช้เวลาใน DataSlide ก่อน</div>
+    <div class="shift-row">Due = ${timeIn('win-time', '', g.time)} ของวันตาม Shipping No. (ยังไม่มีรถ = วันของ Due Date ใน WMS) · Order ที่อยู่ใน DataSlide ใช้เวลาใน DataSlide ก่อน</div>
   </div>`;
     }
     const shift = g.type === 'shift';
@@ -2010,7 +2010,7 @@ function drawRules() {
           <input type="number" class="sh-h" min="0" step="1" value="${Math.floor(Math.abs(g.shift || 0) / 60)}"> ชม.
           <input type="number" class="sh-m" min="0" max="59" step="1" value="${Math.abs(g.shift || 0) % 60}"> นาที</div>`
       : `<div class="rmap"><span class="hd">Original Due (WMS)</span><span class="hd">Slide Due</span><span></span>
-      ${g.map.map((m, mi) => `<input type="time" class="orig" data-m="${mi}" value="${esc(m.orig)}"><input type="time" class="slide" data-m="${mi}" value="${esc(m.slide)}">
+      ${g.map.map((m, mi) => `${timeIn('orig', mi, m.orig)}${timeIn('slide', mi, m.slide)}
         <button type="button" class="icon-btn admin-only" data-delm="${gi}:${mi}" title="ลบแถว">✕</button>`).join('')}
     </div>
     <button type="button" class="btn ghost admin-only" data-addm="${gi}" style="margin-top:6px">+ เพิ่มเวลา</button>`;
@@ -2022,6 +2022,11 @@ function drawRules() {
   </div>`;
   }).join('') || '<p class="hint">ยังไม่มีกฎ</p>';
 }
+// 24 h time box (native type=time follows the PC locale and may show AM/PM)
+const timeIn = (cls, mi, v) => `<input type="text" class="${cls} t24" inputmode="numeric" maxlength="5" placeholder="HH:MM" autocomplete="off"${mi === '' ? '' : ` data-m="${mi}"`} value="${esc(v || '')}">`;
+// keep what was typed when it is not a time, so the save check can point at it
+const isTime = (v) => !!v && normTime(v) === v;
+const readTime = (el) => normTime(el.value) || el.value.trim();
 // -1 = earlier, 1 = later (draft keeps dir so the choice survives while the amount is 0)
 const shiftDir = (g) => g.dir || (g.shift > 0 ? 1 : -1);
 function readRules() {
@@ -2029,7 +2034,7 @@ function readRules() {
     const g = draft.groups[+el.dataset.g];
     if (g.type === 'window') {
       g.windows = el.querySelector('.wins-in').value.split(/[,\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
-      g.time = el.querySelector('.win-time').value;
+      g.time = readTime(el.querySelector('.win-time'));
       return;
     }
     g.docks = el.querySelector('.docks').value.split(/[,\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
@@ -2039,7 +2044,7 @@ function readRules() {
       g.dir = shiftDir(g);
       g.shift = g.dir * (h * 60 + m);
     }
-    else g.map = g.map.map((m, mi) => ({ orig: el.querySelector(`.orig[data-m="${mi}"]`).value, slide: el.querySelector(`.slide[data-m="${mi}"]`).value }));
+    else g.map = g.map.map((m, mi) => ({ orig: readTime(el.querySelector(`.orig[data-m="${mi}"]`)), slide: readTime(el.querySelector(`.slide[data-m="${mi}"]`)) }));
   });
 }
 
@@ -2117,6 +2122,13 @@ function bind() {
 
   // rules
   $('#btnRules').addEventListener('click', openRules);
+  $('#rulesBody').addEventListener('focusout', (e) => {
+    const t = e.target;
+    if (!t.classList || !t.classList.contains('t24')) return;
+    const v = normTime(t.value);
+    if (v) t.value = v;
+    t.classList.toggle('bad', !!t.value.trim() && !v);
+  });
   $('#rulesBody').addEventListener('click', (e) => {
     const t = e.target;
     if (!t.dataset) return;
@@ -2177,9 +2189,9 @@ function bind() {
   $('#btnRsnDel').addEventListener('click', () => saveReasonDlg(true));
   $('#btnSaveRules').addEventListener('click', async () => {
     readRules();
-    const bad = draft.groups.some((g) => g.type === 'window' ? !g.windows.length || !/^\d{2}:\d{2}$/.test(g.time || '') : !g.docks.length || (g.type === 'shift' ? !Number.isInteger(g.shift) || !g.shift
-      : g.map.some((m) => !/^\d{2}:\d{2}$/.test(m.orig) || !/^\d{2}:\d{2}$/.test(m.slide))));
-    if (bad) { $('#rulesErr').textContent = 'กรุณาใส่ Dock / Window และเวลาให้ครบทุกแถว'; return; }
+    const bad = draft.groups.some((g) => g.type === 'window' ? !g.windows.length || !isTime(g.time) : !g.docks.length || (g.type === 'shift' ? !Number.isInteger(g.shift) || !g.shift
+      : g.map.some((m) => !isTime(m.orig) || !isTime(m.slide))));
+    if (bad) { $('#rulesErr').textContent = 'กรุณาใส่ Dock / Window และเวลาให้ครบทุกแถว (เวลาแบบ 24 ชม. เช่น 08:30, 15:30)'; return; }
     const wAll = draft.groups.filter((g) => g.type === 'window').flatMap((g) => g.windows);
     const wDup = [...new Set(wAll.filter((w, i) => wAll.indexOf(w) !== i))];
     if (wDup.length) { $('#rulesErr').textContent = `Window ซ้ำในหลายกฎ: ${wDup.join(', ')}`; return; }
