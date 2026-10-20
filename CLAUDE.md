@@ -28,13 +28,19 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
   Viewers load the archive only for the days being viewed (±1 day).
   An upload whose merged rows equal the stored ones (any order) only updates the meta doc (`touchMeta`): viewers keep their
   cache; the truck history is saved only when it changed. `uploadlog` = one doc `{ u<ms>: { k, f, ft, at, by, auto, ok, msg } }`
-  (newest 100, failed uploads too), read only on the data page.
+  (newest 100, failed uploads too), read only on the data page by signed-in users (firestore.rules: get, no list).
   `reasons` = one doc `{ 'Shipping No.': { c: code, t: note, by: email, at: ISO } }` (late / overdue truck reasons, patched per
   truck with `mergeDoc`, watched like the meta docs).
   Payloads are gzip-compressed + base64 (`packPayload`, meta `enc: 'gz'`, `bytes` = stored size, `raw` = JSON size;
   ~12% of the JSON, 19/10/2026 — old saves without `enc` are plain JSON and still read) and split into ≤900 KB chunk docs named `<prefix>_<cid>_c<i>` (old saves: `<prefix>_c<i>`);
   new chunks are written first (in batches ≤ 8 MB / 400 ops), then the meta doc (`cid`, `version`), then old chunks are
-  deleted — a failed save keeps the old data; readers retry if a chunk's `v` ≠ meta.version. `arch_index` is updated
+  deleted — a failed save keeps the old data; readers retry if a chunk's `v` ≠ meta.version.
+  Concurrency (20/10/2026): read → merge → save jobs (uploads, rules save + lockConfirmedDues, truck-history rebuild,
+  quarter delete) run one at a time per tab (`exclusive`); across devices `saveChunked(…, expect)` re-reads the meta from
+  the server and refuses the save (CONFLICT message, nothing written) when another device saved since the caller's read.
+  Watched docs are served from their listeners (`live`), so a reload costs no meta reads; a snapshot equal to what was
+  loaded doesn't reload; a failed listener re-subscribes with backoff and the header shows "⚠ ขาดการเชื่อมต่อ".
+  Open screens reload themselves after a deploy (`deployCheck`: ETag of js/app.js every 10 min, only when idle). `arch_index` is updated
   field by field (`mergeDoc`, setDoc merge) so concurrent devices don't overwrite each other. Viewers watch only the meta docs.
 - `js/app.js` — UI (Thai labels), uploads, filters, rules dialog, Excel export.
   Pages via URL hash: `#overview`, `#window`, `#trucks`, `#est`, `#plan`, `#check`, `#kpi`, `#detail`, `#data` (uploads + rules).
@@ -85,6 +91,9 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
      changed rows are replaced, rows missing from it are dropped (e.g. pallets merged / moved before confirm reappear
      under the new Pallet No.). Real data (Aug–Oct) has no shipped-but-unconfirmed rows.
    - CONFIRMED rows whose ship day is older than `keepDays` (default 7) move to the archive (not deleted).
+   - A stored CONFIRMED line is skipped only when the archive already holds that exact line (key + Shipping No. + boxes +
+     quantity, counted one by one); siblings of an archived key are kept (fixed 20/10/2026 — before, any archived row with
+     the same key dropped them).
    - Truck history for Est learns only from CONFIRMED rows.
    ILMS uploads merge by Truckplan No (not deleted by uploads); trucks with Milestone `COMPLETE` are LOCKED like
    confirmed WMS rows, other trucks take the newer file's values.
