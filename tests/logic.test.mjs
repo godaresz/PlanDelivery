@@ -196,3 +196,16 @@ test('6. WMS upload: a due stamped on a stored CONFIRMED row by lockDues is a ch
   assert.equal(lockDues(m.rows, new Map(), []), 1);
   assert.notEqual(canon(m.rows), before); // compared with the canonical form taken BEFORE the merge
 });
+
+test('6. a stored CONFIRMED sibling of an archived line is never lost; an exact copy of an archived line is not duplicated', () => {
+  const A = row({ k: 'K', sn: '202610101D001', bx: 5, q: 10, cf: 1, sh: '2026-10-10 10:00', tr: 'T' }); // archived
+  const B = row({ k: 'K', sn: '202610181D002', bx: 3, q: 6, cf: 1, sh: '2026-10-18 10:00', tr: 'T' });  // stored, active
+  const arch = new Map([['K', [A]]]);
+  for (const file of [[{ ...A }, { ...B }], [{ ...A }], []]) {
+    const m = mergeWms([B], file, 7, D('2026-10-20 12:00'), arch);
+    assert.equal(m.rows.filter((r) => r.sn === B.sn).length, 1, `file of ${file.length}`);
+    assert.equal(m.rows.concat(m.toArchive).filter((r) => r.sn === A.sn).length, 0);
+  }
+  const dupe = mergeWms([{ ...A }], [], 7, D('2026-10-20 12:00'), arch); // stored row identical to the archived one
+  assert.equal(dupe.rows.length + dupe.toArchive.length, 0);
+});

@@ -27,6 +27,7 @@
     </div>
     <div class="top-right">
       <span id="clock" class="clock"></span>
+      <span id="liveTag" class="live-off" hidden title="การเชื่อมต่อข้อมูลสดกับ Firebase ขาด — ระบบกำลังเชื่อมต่อใหม่อัตโนมัติ">⚠ ขาดการเชื่อมต่อ</span>
       <span id="modeBadge" class="badge"></span>
       <button id="btnNotify" class="btn ghost" title="แจ้งเตือน + เสียง ในเครื่องนี้ เมื่อมีรถใกล้ถึง Due หรือเลย Due ยังไม่ออก (ต้องเปิดหน้าเว็บค้างไว้)">🔕 แจ้งเตือน</button>
       <button id="btnTv" class="btn ghost" title="โหมดจอใหญ่ สำหรับเปิดค้างไว้หน้า Dock (เปลี่ยนหน้าอัตโนมัติ)">📺 จอใหญ่</button>
@@ -292,7 +293,7 @@
           <span class="hint" id="autoStatus"></span>
         </div>
       </section>
-      <section class="panel" id="logPanel">
+      <section class="panel admin-only" id="logPanel">
         <div class="panel-h"><h2>ประวัติการอัปโหลด</h2><button class="btn sm ghost" id="btnLogRefresh">↻ รีเฟรช</button>
           <span class="hint">100 ครั้งล่าสุดจากทุกเครื่อง รวมการอัปเดตอัตโนมัติที่ไม่สำเร็จ</span></div>
         <div class="table-wrap log-wrap"><table class="tbl mini" id="tblLog"></table></div>

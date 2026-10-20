@@ -6,10 +6,16 @@ service cloud.firestore {
     function isEditor() {
       return request.auth != null && request.auth.token.email in ['admin@delivery.co'];
     }
+    // upload history holds editors' emails: signed-in users only
+    match /shipcheck/uploadlog {
+      allow get: if request.auth != null;
+      allow write: if isEditor();
+    }
     match /shipcheck/{docId} {
-      // Anyone with the link can view. To require login for viewing too,
-      // change the next line to:  allow read: if request.auth != null;
-      allow read: if true;
+      // Anyone with the link can view a document (the app only reads docs by id).
+      // "get" without "list": nobody can dump the whole collection with one request.
+      // To require login for viewing too, change the next line to:  allow get: if request.auth != null;
+      allow get: if docId != 'uploadlog';
       allow write: if isEditor();
     }
     match /{document=**} {

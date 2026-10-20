@@ -218,7 +218,6 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
   return [...g.values()].sort((a, b) => t(a) - t(b) || a.sn.localeCompare(b.sn));
 }
 
-// merge ILMS uploads: newer file wins per Truckplan No; drop trucks older than keepDays
 // merge ILMS uploads: nothing is deleted. A truck whose Milestone is COMPLETE is LOCKED (a new file never changes it);
 // other trucks take the newer file's values (their milestone is still moving).
 export const ilmsLocked = (r) => String(r.ms || '').toUpperCase() === 'COMPLETE';
@@ -534,8 +533,17 @@ export function mergeWms(oldRows, newRows, keepDays, now, archived = new Map()) 
     }
   }
   let kept = 0, dropped = 0;
+  // a stored CONFIRMED line is left out only when the archive already holds that same line (same key + sig, counted
+  // one by one); a sibling line of an archived key (other Shipping No. / boxes / quantity) is kept — nothing confirmed is lost
+  const archLeft = new Map();
+  for (const [k, rs] of archived) for (const a of rs) { const id = `${k}#${sig(a)}`; archLeft.set(id, (archLeft.get(id) || 0) + 1); }
   for (const o of oldRows) {
-    if (o.cf === 1) { if (!archived.has(o.k)) { out.push(o); if (!byKey.has(o.k)) kept++; } continue; }
+    if (o.cf === 1) {
+      const id = `${o.k}#${sig(o)}`, n = archLeft.get(id) || 0;
+      if (n > 0) { archLeft.set(id, n - 1); continue; } // already in the archive
+      out.push(o); if (!byKey.has(o.k)) kept++;
+      continue;
+    }
     if (!byKey.has(o.k)) dropped++; // provisional row no longer in WMS
   }
   const cutoff = new Date(now.getTime() - keepDays * 86400000);

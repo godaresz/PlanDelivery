@@ -29,7 +29,6 @@ body { font-family: 'IBM Plex Sans Thai', system-ui, sans-serif; font-size: 14px
 .top { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
   padding: 12px 24px; background: linear-gradient(100deg, #0F172A 0%, #1E293B 60%, #1E3A8A 140%); color: #fff; }
 .brand { display: flex; gap: 12px; align-items: center; }
-.logo { width: 40px; height: 40px; border-radius: 11px; background: linear-gradient(135deg, #3B82F6, #7C3AED); box-shadow: 0 4px 12px rgba(59,130,246,.35); display: grid; place-items: center; font-weight: 700; }
 .top h1 { font-size: 18px; margin: 0; }
 .top .sub { font-size: 12px; color: #CBD5E1; }
 .top-right { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -255,7 +254,6 @@ body { background: radial-gradient(1200px 500px at 100% -10%, #E0E7FF 0%, transp
 .top { background: linear-gradient(110deg, #0F172A 0%, #1E293B 35%, #1E3A8A 70%, #4C1D95 100%); background-size: 220% 100%;
   animation: hdrDrift 18s ease-in-out infinite alternate; }
 @keyframes hdrDrift { from { background-position: 0% 50%; } to { background-position: 100% 50%; } }
-.logo { animation: logoGlow 3.2s ease-in-out infinite; }
 @keyframes logoGlow { 50% { box-shadow: 0 4px 22px rgba(124,58,237,.65); } }
 .clock::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%;
   background: var(--c-done); vertical-align: middle; animation: livePulse 2s infinite; }
@@ -624,6 +622,11 @@ body.anim .plan-chart .lnp, body.anim .plan-chart .dot { transform-box: fill-box
 body.tv .site-foot { display: none; }
 /* credit badge: same as the gatepass project (fixed top-left, white 50%, gray bold, rounded bottom-right, not printed) */
 .made-by { position: fixed; top: 0; left: 0; z-index: 50; padding: 4px; font-size: 12px; line-height: 1; font-weight: 700;
-  color: #4B5563; background: rgba(255,255,255,.5); border-bottom-right-radius: 8px; pointer-events: none; }
+  color: #1F2937; background: rgba(255,255,255,.9); border-bottom-right-radius: 8px; pointer-events: none; } /* .9: readable (AA) over the dark header */
 @media print { .made-by { display: none; } }
 .top { padding-top: 22px; }
+/* connection lost + keyboard focus */
+.live-off { font-size: 12px; font-weight: 600; color: #FEF2F2; background: #DC2626; padding: 3px 10px; border-radius: 99px; animation: dotPulse 1.6s infinite; }
+body.offline .clock::before { background: #EF4444; animation: none; }
+:focus-visible { outline: 3px solid #93C5FD; outline-offset: 2px; border-radius: 6px; }
+tr.clickable:focus-visible { outline-offset: -3px; }

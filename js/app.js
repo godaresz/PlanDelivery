@@ -240,7 +240,7 @@ async function deleteQuarter(q) {
   await store.deleteArchiveDays(x.days, S.data.archIndex);
   const keepIlms = (S.data.ilms.data || []).filter((r) => !r.dt || quarterOf(r.dt.slice(0, 10)) !== q);
   if (keepIlms.length !== (S.data.ilms.data || []).length) {
-    await store.saveIlms(keepIlms, { ...(S.data.ilms.meta || {}), count: keepIlms.length });
+    await store.saveIlms(keepIlms, { ...(S.data.ilms.meta || {}), count: keepIlms.length }, S.data.ilms.meta ? S.data.ilms.meta.version : null);
   }
   S.arch.clear();
   toast(`ลบไตรมาส ${q} ออกจาก Firebase แล้ว`);
@@ -262,7 +262,7 @@ function renderArchive() {
         ${admin && x.due && x.exported ? `<button class="btn danger sm" data-del="${x.q}">ลบออกจาก Firebase</button>` : ''}</td></tr>`;
   }).join('') || '<tr><td colspan="7" class="hint">ยังไม่มีข้อมูลในประวัติ</td></tr>'}</tbody>`;
   $$('#tblArch [data-exp]').forEach((b) => b.addEventListener('click', () => exportQuarter(b.dataset.exp).catch((e) => toast('Export ไม่สำเร็จ: ' + e.message, true))));
-  $$('#tblArch [data-del]').forEach((b) => b.addEventListener('click', () => deleteQuarter(b.dataset.del).catch((e) => toast('ลบไม่สำเร็จ: ' + e.message, true))));
+  $$('#tblArch [data-del]').forEach((b) => b.addEventListener('click', () => exclusive(() => deleteQuarter(b.dataset.del)).catch((e) => toast('ลบไม่สำเร็จ: ' + e.message, true))));
   const due = qs.filter((x) => x.due);
   const banner = $('#archBanner');
   banner.hidden = !admin || !due.length;
@@ -275,6 +275,7 @@ function renderArchive() {
 }
 // rebuild the truck history for Est from every archived day + active data (one archive day at a time)
 async function rebuildHist() {
+  const histVer = S.data.truckhist.meta ? S.data.truckhist.meta.version : null; // refuse if an upload saves meanwhile
   const idx = S.data.archIndex || {};
   const prev = S.hist || {};
   // start from the saved history so trucks of quarters already deleted from Firebase are kept
@@ -292,7 +293,7 @@ async function rebuildHist() {
     const old = (prev.links && prev.links[wh]) || { parts: {}, sups: {} }, ln = truckAccLinks(acc);
     hist.links[wh] = { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } };
   }
-  await store.saveTruckHist(hist, { WH1: Object.keys(hist.WH1).length, WH4: Object.keys(hist.WH4).length, rebuilt: new Date().toISOString() });
+  await store.saveTruckHist(hist, { WH1: Object.keys(hist.WH1).length, WH4: Object.keys(hist.WH4).length, rebuilt: new Date().toISOString() }, histVer);
   toast(`สร้างสรุปรถใหม่แล้ว: WH1 ${Object.keys(hist.WH1).length.toLocaleString()} คัน · WH4 ${Object.keys(hist.WH4).length.toLocaleString()} คัน`, false, 9000);
   await reload();
 }
@@ -322,7 +323,7 @@ async function lockConfirmedDues() {
     const cur = latest[wh] && latest[wh].data;
     if (cur && lockDues(cur, slide, rules)) {
       const { chunks, cid, version, ...meta } = latest[wh].meta || {};
-      await store.saveWms(wh, cur, meta); // keeps the file's upload time (updatedAt)
+      await store.saveWms(wh, cur, meta, latest[wh].meta ? latest[wh].meta.version : null); // keeps the file's upload time (updatedAt)
     }
   }
 }
@@ -334,6 +335,9 @@ function slideMapOf(sd) {
 async function reload() {
   try {
     S.data = await store.loadAll();
+    const ai = S.data.archIndex || {}, prevAi = S.archIdx || {};
+    for (const key of [...S.arch.keys()]) { const [wh, d] = key.split('|'); if ((ai[wh] || {})[d] !== (prevAi[wh] || {})[d]) S.arch.delete(key); }
+    S.archIdx = JSON.parse(JSON.stringify(ai));
     S.rules = withRuleDefaults(S.data.rules);
     S.slideMap = slideMapOf(S.data.slide.data);
     setSoonMin(S.rules.soonMin);
@@ -380,7 +384,7 @@ function renderSources() {
       <button class="btn ghost sm admin-only" id="btnRebuild">สร้างสรุปรถใหม่จากประวัติทั้งหมด</button></div>`;
   $('#btnRebuild').addEventListener('click', () => {
     if (!confirm('สร้างสรุปรถสำหรับประมาณการใหม่ จากประวัติทุกวัน + ข้อมูลปัจจุบัน?\n(โหลดประวัติทั้งหมด 1 ครั้ง อาจใช้เวลา 1–3 นาที)')) return;
-    rebuildHist().catch((e) => toast('สร้างไม่สำเร็จ: ' + e.message, true, 9000));
+    exclusive(rebuildHist).catch((e) => toast('สร้างไม่สำเร็จ: ' + e.message, true, 9000));
   });
   const im = S.data.ilms.meta;
   const sns = new Set(WHS.flatMap((wh) => (S.data[wh].data || []).map((r) => r.sn).filter(Boolean)));
@@ -483,7 +487,7 @@ function render(quiet = false) {
     clearTimeout(animT); animT = setTimeout(() => document.body.classList.remove('anim'), 1800);
   }
   const before = snapNumbers();
-  try { renderAll(); } finally {
+  try { renderAll(); $$('tr.clickable, .bar-row, .plan-chart [data-pk]').forEach((el) => { el.tabIndex = 0; }); } finally {
     if (animate) countUp(document.querySelector(`.page[data-page="${S.page}"]`) || document.body);
     else if (!calm.matches) flashChanges(before);
   }
@@ -519,12 +523,14 @@ function renderStale() {
   }
   const ai = age(S.data.ilms && S.data.ilms.meta);
   if (ai !== null && ai > lim.ilms) msgs.push(`ILMS อัปโหลดล่าสุด ${hrs(ai)} ที่แล้ว`);
+  // statuses compare local clock times with dues stored as Thai local time: another PC time zone shows wrong statuses
+  const tzOff = new Date().getTimezoneOffset() !== -420;
   const h = S.hist || {};
   const oldHist = S.user && WHS.some((wh) => Object.values(h[wh] || {}).some((t) => t.v !== 2)) || (S.user && !h.links && Object.keys(h.WH1 || {}).length);
   const b = $('#staleBanner');
-  b.hidden = !msgs.length && !oldHist;
+  b.hidden = !msgs.length && !oldHist && !tzOff;
   if (b.hidden) return;
-  b.innerHTML = (msgs.length ? `<span>⏱ ข้อมูลอาจไม่เป็นปัจจุบัน: ${msgs.map(esc).join(' · ')} — สถานะเลยกำหนด/รอส่งคิดจากไฟล์ล่าสุดที่อัปโหลด</span>` : '')
+  b.innerHTML = (tzOff ? '<span>🕒 เวลาของเครื่องนี้ไม่ใช่เวลาประเทศไทย (UTC+7) — สถานะเลยกำหนด/รอส่งจะคลาดเคลื่อน ตั้ง Time zone ของเครื่องเป็น Bangkok</span>' : '') + (msgs.length ? `<span>⏱ ข้อมูลอาจไม่เป็นปัจจุบัน: ${msgs.map(esc).join(' · ')} — สถานะเลยกำหนด/รอส่งคิดจากไฟล์ล่าสุดที่อัปโหลด</span>` : '')
     + (oldHist ? `<span>📦 สรุปรถสำหรับประมาณการยังเป็นแบบเก่า — ไปหน้า <a href="#data">ข้อมูล &amp; กฎ</a> แล้วกด "สร้างสรุปรถใหม่จากประวัติทั้งหมด" 1 ครั้ง</span>` : '');
 }
 function renderAll() {
@@ -758,8 +764,12 @@ async function saveReasonDlg(del) {
   const sn = $('#dlgReason').dataset.sn;
   try {
     const v = del ? null : { c: $('#rsnCode').value, t: $('#rsnNote').value.trim().slice(0, 200), by: (S.user && S.user.email) || '', at: new Date().toISOString() };
-    await store.saveReason(sn, v);
+    // reasons older than 400 days are dropped in the same write (KPI shows at most 90 days)
+    const cut = Date.now() - 400 * 86400000;
+    const prune = Object.fromEntries(Object.entries(S.reasons || {}).filter(([k, r]) => k !== sn && r && r.at && Date.parse(r.at) < cut).map(([k]) => [k, null]));
+    await store.saveReason(sn, v, prune);
     S.reasons = { ...S.reasons }; if (v) S.reasons[sn] = v; else delete S.reasons[sn];
+    Object.keys(prune).forEach((k) => delete S.reasons[k]);
     $('#dlgReason').close(); render(true);
     toast(del ? `ลบเหตุผลของ ${sn} แล้ว` : `บันทึกเหตุผลของ ${sn} แล้ว`);
   } catch (e) { toast('บันทึกไม่สำเร็จ: ' + e.message, true, 8000); }
@@ -1708,8 +1718,29 @@ async function onUpload(e) {
 }
 // rows as one string regardless of order (a merge puts kept confirmed rows after the file's rows); equal = nothing to save
 const rowsCanon = (rows) => rows.map((r) => JSON.stringify(r)).sort().join('\n');
+// jobs that read → merge → save shared data run one at a time in this tab (manual upload during an auto upload,
+// rules save, truck-history rebuild, quarter delete); other devices are caught by the version check in saveChunked
+let jobQ = Promise.resolve();
+function exclusive(fn) {
+  S.jobs = (S.jobs || 0) + 1;
+  const p = jobQ.then(fn).finally(() => { S.jobs--; });
+  jobQ = p.catch(() => {});
+  return p;
+}
+// a new deploy also reaches screens that stay open for days (TV / auto-upload PC): every 10 min compare the app file's
+// ETag / Last-Modified; when it changed and nothing is running (no upload job, no dialog open) the page reloads itself
+async function deployCheck() {
+  try {
+    const r = await fetch('js/app.js', { method: 'HEAD', cache: 'no-store' });
+    const tag = r.ok && (r.headers.get('etag') || r.headers.get('last-modified'));
+    if (!tag) return;
+    if (!S.appTag) { S.appTag = tag; return; }
+    if (tag !== S.appTag && !S.jobs && !(autoUp && autoUp.busy) && !document.querySelector('dialog[open]')) location.reload();
+  } catch { /* offline: try next time */ }
+}
 // upload one file and keep a log entry (who / when / which file / result) in the shared doc "uploadlog"
-async function uploadFile(kind, file, auto = false) {
+function uploadFile(kind, file, auto = false) { return exclusive(() => uploadFileLogged(kind, file, auto)); }
+async function uploadFileLogged(kind, file, auto) {
   S.upMsg = null;
   try {
     await uploadFileRun(kind, file, auto);
@@ -1731,7 +1762,7 @@ async function uploadFileRun(kind, file, auto = false) {
     const ilmsMeta = { fileName: file.name, fileAt: file.lastModified || null, count: m.rows.length, fromFile: res.rows.length };
     // nothing changed: only the meta doc is updated, so viewers don't download the same data again
     if (latest.ilms && latest.ilms.meta && rowsCanon(m.rows) === rowsCanon(oldIlms)) await store.touchMeta('ilms', ilmsMeta);
-    else await store.saveIlms(m.rows, ilmsMeta);
+    else await store.saveIlms(m.rows, ilmsMeta, latest.ilms && latest.ilms.meta ? latest.ilms.meta.version : null);
     toast(S.upMsg = `อัปเดต ILMS แล้ว: ${res.rows.length.toLocaleString()} คันจากไฟล์ (WH1/WH4)` + (res.other ? ` · ข้ามคลังอื่น ${res.other}` : '')
       + (m.skipped ? ` · ข้ามที่ COMPLETE แล้ว ${m.skipped.toLocaleString()}` : '')
       + ` · รวมเก็บไว้ ${m.rows.length.toLocaleString()} คัน`, false, 8000);
@@ -1790,13 +1821,14 @@ async function uploadFileRun(kind, file, auto = false) {
       hist.links = { ...(hist.links || {}), [wh]: { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } } };
       const wmsMeta = { fileName: file.name, fileAt: file.lastModified || null, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped };
       if (latest[wh] && latest[wh].meta && !m.toArchive.length && rowsCanon(m.rows) === oldCanon) await store.touchMeta(wh, wmsMeta);
-      else await store.saveWms(wh, m.rows, wmsMeta);
+      else await store.saveWms(wh, m.rows, wmsMeta, latest[wh] && latest[wh].meta ? latest[wh].meta.version : null);
       msgs.push(`${wh} ${split[wh].length.toLocaleString()} แถว` + (m.skipped ? ` · ข้ามที่ Confirm แล้ว ${m.skipped.toLocaleString()}` : '')
         + (m.kept ? ` · เก็บที่ส่งแล้วจากรอบก่อน ${m.kept.toLocaleString()}` : '')
         + (m.dropped ? ` · ไม่มีในไฟล์ใหม่ (ยังไม่ Confirm) เอาออก ${m.dropped.toLocaleString()}` : '')
         + (m.toArchive.length ? ` · ย้ายเข้าประวัติ ${m.toArchive.length.toLocaleString()}` : ''));
     }
-    if (JSON.stringify(hist) !== histBefore) await store.saveTruckHist(hist, { WH1: Object.keys(hist.WH1 || {}).length, WH4: Object.keys(hist.WH4 || {}).length });
+    if (JSON.stringify(hist) !== histBefore) await store.saveTruckHist(hist, { WH1: Object.keys(hist.WH1 || {}).length, WH4: Object.keys(hist.WH4 || {}).length },
+      latest.truckhist && latest.truckhist.meta ? latest.truckhist.meta.version : null);
     const miss = WHS.filter((wh) => !split[wh].length);
     toast(S.upMsg = `อัปเดต WMS แล้ว: ${msgs.join(' · ')}` + (miss.length ? ` · ไม่มีข้อมูล ${miss.join(', ')} ในไฟล์ (คงข้อมูลเดิม)` : '')
       + (other ? ` · ข้ามแถวอื่น ${other}` : ''), false, 9000);
@@ -2155,7 +2187,7 @@ function bind() {
     draft.soonMin = Math.max(5, Math.min(240, Number($('#soonMin').value) || 30));
     draft.escMin = Math.max(5, Math.min(600, Number($('#escMin').value) || 30));
     draft.scanMin = Math.max(5, Math.min(1440, Number($('#scanMin').value) || 60));
-    try { await lockConfirmedDues(); await store.saveRules(draft); $('#dlgRules').close(); toast('บันทึกกฎแล้ว'); await reload(); }
+    try { await exclusive(async () => { await lockConfirmedDues(); await store.saveRules(draft); }); $('#dlgRules').close(); toast('บันทึกกฎแล้ว'); await reload(); }
     catch (err) { $('#rulesErr').textContent = 'บันทึกไม่สำเร็จ: ' + err.message; }
   });
 }
@@ -2411,6 +2443,16 @@ async function main() {
   });
   let rt;
   store.onChange(() => { clearTimeout(rt); rt = setTimeout(reload, 400); });
+  // live listener lost (permission / quota / network): say so instead of silently showing old numbers
+  if (store.onStatus) store.onStatus((ok) => { $('#liveTag').hidden = ok; document.body.classList.toggle('offline', !ok); });
+  // keyboard: clickable rows / chips / tiles / chart items open with Enter or Space
+  document.addEventListener('keydown', (e) => {
+    const el = e.target;
+    if ((e.key === 'Enter' || e.key === ' ') && el.matches && el.matches('tr.clickable, .bar-row, [data-pk], .chk-tile, .tb-chip, .lg-row')) {
+      e.preventDefault(); el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    }
+  });
+  setInterval(deployCheck, 600000); deployCheck();
   window.addEventListener('hashchange', showPage);
   await reload();
   showPage();

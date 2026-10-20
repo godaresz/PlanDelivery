@@ -23,9 +23,25 @@ export async function init() {
   db = fs.getFirestore(app);
   auth = fa.getAuth(app);
   // live updates: only the small meta documents are watched
-  for (const id of ['slide_meta', 'WH1_meta', 'WH4_meta', 'ilms_meta', 'arch_index', 'rules', 'reasons']) {
-    fs.onSnapshot(fs.doc(db, COLLECTION, id), () => emit(), () => {});
-  }
+  for (const id of WATCHED) watch(id);
+}
+// The listeners keep the latest copy of each watched doc (`live`), so a reload reads them from memory instead of the
+// server (Spark: 50k reads/day). A snapshot that equals what was already loaded does not trigger a reload.
+// A listener that fails (permission / quota / network) is re-subscribed with a growing delay; onStatus tells the app.
+const WATCHED = ['slide_meta', 'WH1_meta', 'WH4_meta', 'ilms_meta', 'truckhist_meta', 'arch_index', 'rules', 'reasons'];
+const live = new Map(), liveSig = new Map();
+let statusFn = () => {};
+export const onStatus = (fn) => { statusFn = fn; };
+function watch(id, delay = 15000) {
+  fs.onSnapshot(fs.doc(db, COLLECTION, id), (snap) => {
+    const d = snap.exists() ? snap.data() : null, sig = JSON.stringify(d);
+    live.set(id, d); statusFn(true);
+    if (liveSig.get(id) === sig) return;
+    liveSig.set(id, sig); emit();
+  }, (err) => {
+    live.delete(id); liveSig.delete(id); statusFn(false, err);
+    setTimeout(() => watch(id, Math.min(300000, delay * 2)), delay);
+  });
 }
 
 function emit() { listeners.forEach((fn) => fn()); }
@@ -40,13 +56,17 @@ export async function signIn(email, pw) { if (!isDemo) await fa.signInWithEmailA
 export async function signOut() { if (!isDemo) await fa.signOut(auth); }
 
 // ---------- low level ----------
-async function getDoc(id) {
+// fresh = always ask the server (used right before a save); otherwise a watched doc comes from its listener
+async function getDoc(id, fresh = false) {
   if (isDemo) {
     const s = localStorage.getItem('shipcheck_' + id);
     return s ? JSON.parse(s) : null;
   }
+  if (!fresh && live.has(id)) return live.get(id);
   const snap = await fs.getDoc(fs.doc(db, COLLECTION, id));
-  return snap.exists() ? snap.data() : null;
+  const d = snap.exists() ? snap.data() : null;
+  if (WATCHED.includes(id)) liveSig.set(id, JSON.stringify(d)); // its first snapshot then won't reload again
+  return d;
 }
 
 // deep-merge a document; a null leaf deletes that field (used for the shared arch_index)
@@ -120,11 +140,15 @@ export async function unpackPayload(body, enc) {
   if (enc !== 'gz') return body;
   return new Response(new Blob([unb64(body)]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
 }
-async function saveChunked(prefix, payload, meta) {
+// expect = the meta.version the caller merged from (null = there was none). If another device saved in between, the
+// save is refused (nothing written) instead of overwriting that device's rows; undefined = no check (full replace).
+export const CONFLICT = 'ข้อมูลถูกอัปเดตจากเครื่องอื่นระหว่างนี้ — ยังไม่ได้บันทึก กรุณาลองใหม่อีกครั้ง (อัปเดตอัตโนมัติจะลองใหม่เอง)';
+async function saveChunked(prefix, payload, meta, expect) {
+  const old = await getDoc(prefix + '_meta', true);
+  if (expect !== undefined && (old ? old.version : null) !== (expect ?? null)) throw new Error(CONFLICT);
   const json = JSON.stringify(payload);
   const { body, enc } = await packPayload(json);
   const parts = splitBytes(body);
-  const old = await getDoc(prefix + '_meta');
   const version = Date.now() * 1000 + Math.floor(Math.random() * 1000); // unique even for saves in the same ms
   const cid = 'v' + version.toString(36);
   const m = { ...meta, chunks: parts.length, cid, version, enc, bytes: new TextEncoder().encode(body).length, raw: json.length,
@@ -206,9 +230,9 @@ export async function loadAll() {
 export const saveSlide = (payload, meta) => saveChunked('slide', payload, meta);
 // file checked but nothing changed: update only the meta doc (file name / time, upload time) — viewers keep their cache
 export const touchMeta = (prefix, patch) => mergeDoc(prefix + '_meta', { ...patch, updatedAt: new Date().toISOString() });
-export const saveWms = (wh, rows, meta) => saveChunked(wh, rows, meta);
-export const saveTruckHist = (hist, meta) => saveChunked('truckhist', hist, meta);
-export const saveIlms = (rows, meta) => saveChunked('ilms', rows, meta);
+export const saveWms = (wh, rows, meta, expect) => saveChunked(wh, rows, meta, expect);
+export const saveTruckHist = (hist, meta, expect) => saveChunked('truckhist', hist, meta, expect);
+export const saveIlms = (rows, meta, expect) => saveChunked('ilms', rows, meta, expect);
 // ---------- archive: shipped rows by day, written once and never deleted ----------
 // docs arch_<WH>_<YYYYMMDD>_meta + _c*; index doc arch_index = { WH1: { 'YYYY-MM-DD': rowCount }, WH4: {...} }
 const archId = (wh, day) => `arch_${wh}_${day.replace(/-/g, '')}`;
@@ -223,13 +247,13 @@ const rowSig = (r) => `${r.k}|${r.sn || ''}|${r.bx}|${r.q}`;
 export async function appendArchive(wh, byDay, index) {
   const patch = {};
   for (const [day, rows] of byDay) {
-    const old = await loadArchiveDay(wh, day);
+    const cur = await loadChunked(archId(wh, day)), old = cur.data || [];
     const have = new Map();
     old.forEach((r) => have.set(rowSig(r), (have.get(rowSig(r)) || 0) + 1));
     const add = rows.filter((r) => { const n = have.get(rowSig(r)) || 0; if (n) { have.set(rowSig(r), n - 1); return false; } return true; });
     if (!add.length) continue;
     const all = old.concat(add);
-    await saveChunked(archId(wh, day), all, { wh, day, count: all.length });
+    await saveChunked(archId(wh, day), all, { wh, day, count: all.length }, cur.meta ? cur.meta.version : null);
     index[wh] = index[wh] || {};
     index[wh][day] = all.length;
     patch[day] = all.length;
@@ -250,7 +274,8 @@ export async function deleteArchiveDays(list, index) {
 }
 export const saveRules = (rules) => writeDocs([['rules', { ...rules, updatedAt: new Date().toISOString() }]], []);
 // late / overdue reasons per truck: one small doc { 'Shipping No.': { c: code, t: note, by, at } }, patched per truck
-export const saveReason = (sn, v) => mergeDoc('reasons', { [sn]: v });
+// prune = { sn: null, ... } for old entries removed in the same write (the one doc must stay well under 1 MiB)
+export const saveReason = (sn, v, prune = {}) => mergeDoc('reasons', { ...prune, [sn]: v });
 // upload history: one doc { u<ms>: { k, f, ft, at, by, auto, ok, msg } }, patched per entry (null deletes old ones)
 export const loadUploadLog = () => getDoc('uploadlog');
 export const logUpload = (patch) => mergeDoc('uploadlog', patch);
