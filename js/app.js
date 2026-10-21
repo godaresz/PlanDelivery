@@ -1638,6 +1638,7 @@ function go(page) {
 function showPage() {
   const p = location.hash.slice(1);
   S.page = PAGES.includes(p) ? p : 'overview';
+  if (!tv.on) store.presenceUpdate({ pg: S.page }); // a TV screen cycles pages: no write every 30 s
   $$('.page').forEach((el) => { el.hidden = el.dataset.page !== S.page; });
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.page === S.page));
   $('#filterBar').hidden = S.page === 'data' || S.page === 'kpi'; // KPI has its own day range
@@ -2218,11 +2219,55 @@ function bind() {
 
 // ---------- TV mode: big screen at the dock, pages rotate, range follows the current shift ----------
 const TV_PAGES = ['overview', 'trucks', 'plan', 'window'];
+// ---------- who is online (Realtime Database presence, store.presence) ----------
+const PAGE_TH = { overview: 'ภาพรวม', window: 'สรุป Window', trucks: 'สรุปรถ', est: 'ประมาณการรถ', plan: 'Plan รถรายชั่วโมง', check: 'ตรวจข้อมูล',
+  kpi: 'แนวโน้ม KPI', detail: 'รายละเอียด', data: 'ข้อมูล & กฎ' };
+const online = { list: [] };
+function presenceStart() {
+  if (!store.presenceOn) return;
+  let dev = lsGet('sc_dev');
+  if (!dev) { dev = Math.random().toString(36).slice(2, 10); lsSet('sc_dev', dev); }
+  const mob = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  store.presence({ d: dev, pg: S.page || 'overview', tv: tv.on, m: mob }, (list) => {
+    online.list = list || [];
+    $('#onlineTag').hidden = !list;
+    drawOnline();
+  }).catch(() => { $('#onlineTag').hidden = true; });
+  $('#onlineTag').addEventListener('click', () => { drawOnline(); $('#dlgOnline').showModal(); });
+}
+// one row per device (several tabs of one browser = one device; its newest tab decides the page shown)
+function onlineDevices() {
+  const m = new Map();
+  for (const x of online.list) {
+    const o = m.get(x.d) || { d: x.d, tabs: 0, t: Infinity, me: false, u: '', tv: false, m: x.m, pg: x.pg, last: 0 };
+    o.tabs++; o.t = Math.min(o.t, x.t || Infinity); o.me = o.me || !!x.me; o.u = o.u || x.u || ''; o.tv = o.tv || !!x.tv;
+    if ((x.t || 0) >= o.last) { o.last = x.t || 0; o.pg = x.pg; }
+    m.set(x.d, o);
+  }
+  return [...m.values()].sort((a, b) => b.me - a.me || !!b.u - !!a.u || b.tv - a.tv || (a.t === b.t ? 0 : a.t < b.t ? -1 : 1));
+}
+function drawOnline() {
+  const devs = onlineDevices();
+  const n = devs.length, prev = $('#onlineN').textContent;
+  $('#onlineN').textContent = n;
+  if (prev !== String(n) && prev !== '0') { const t = $('#onlineTag'); t.classList.remove('bump'); void t.offsetWidth; t.classList.add('bump'); }
+  const tvN = devs.filter((x) => x.tv).length, mobN = devs.filter((x) => x.m && !x.tv).length, signed = devs.filter((x) => x.u).length;
+  $('#onlineTag').title = `เปิดอยู่ ${n} เครื่อง · จอใหญ่ ${tvN} · มือถือ ${mobN} · คอม ${n - tvN - mobN}${S.user ? ` · เข้าสู่ระบบ ${signed}` : ''} (กดดูรายละเอียด)`;
+  $('#onlineSum').textContent = `${n} เครื่อง · จอใหญ่ ${tvN} · มือถือ ${mobN} · คอม ${n - tvN - mobN}`;
+  const since = (t) => { if (!isFinite(t)) return ''; const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+    return m < 1 ? 'เพิ่งเปิด' : m < 60 ? `${m} นาที` : `${Math.floor(m / 60)} ชม. ${m % 60} นาที`; };
+  $('#onlineList').innerHTML = devs.map((x) => `<div class="on-row${x.me ? ' me' : ''}">
+      <span class="on-ic">${x.tv ? '📺' : x.m ? '📱' : '💻'}</span>
+      <span class="on-who"><b>${x.u ? esc(x.u) : x.tv ? 'จอใหญ่ (TV)' : 'ผู้ชม'}${x.me ? ' <span class="on-me">เครื่องนี้</span>' : ''}</b>
+        <small>${x.tv ? 'หมุนหน้าอัตโนมัติ' : esc(PAGE_TH[x.pg] || x.pg || '')}${x.tabs > 1 ? ` · ${x.tabs} แท็บ` : ''}</small></span>
+      <span class="on-t">${since(x.t)}</span></div>`).join('') || '<p class="hint">ไม่มี</p>';
+}
 const TV_SEC = 30;
 const TV_NAME = { overview: 'ภาพรวม', trucks: 'สรุปรถ', plan: 'Plan รถรายชั่วโมง', window: 'สรุป Window' };
 const tv = { on: false, paused: false, left: TV_SEC, i: 0, timer: null };
 function tvShift() { const n = new Date(), m = n.getHours() * 60 + n.getMinutes(); return m >= 450 && m < 1200 ? 'D' : `N${m < 450 ? ymd(new Date(n.getTime() - 86400000)) : ymd(n)}`; }
 function tvStart() {
+  store.presenceUpdate({ tv: true });
   tv.on = true; tv.paused = false; tv.left = TV_SEC; tv.i = Math.max(0, TV_PAGES.indexOf(S.page));
   document.body.classList.add('tv'); $('#tvBar').hidden = false;
   if (S.mode !== 'due') { S.mode = 'due'; drawMode(); }
@@ -2232,6 +2277,7 @@ function tvStart() {
   clearInterval(tv.timer); tv.timer = setInterval(tvTick, 1000); tvDraw();
 }
 function tvStop() {
+  store.presenceUpdate({ tv: false });
   tv.on = false; clearInterval(tv.timer);
   document.body.classList.remove('tv'); $('#tvBar').hidden = true;
   try { if (document.fullscreenElement) document.exitFullscreen(); } catch { /* ignore */ }
@@ -2483,6 +2529,7 @@ async function main() {
     }
   });
   setInterval(deployCheck, 600000); deployCheck();
+  presenceStart();
   window.addEventListener('hashchange', showPage);
   await reload();
   showPage();

@@ -7,7 +7,7 @@ const CHUNK_BYTES = 900000;   // UTF-8 bytes per chunk document (Firestore limit
 const BATCH_BYTES = 8000000;  // bytes per batch commit (Firestore limit is 10 MiB per request)
 export const isDemo = !firebaseConfig || !firebaseConfig.apiKey;
 
-let db, auth, fs, fa;
+let db, auth, fs, fa, fbApp;
 const listeners = new Set();
 
 export async function init() {
@@ -22,6 +22,7 @@ export async function init() {
   const app = appMod.initializeApp(firebaseConfig);
   db = fs.getFirestore(app);
   auth = fa.getAuth(app);
+  fbApp = app;
   // live updates: only the small meta documents are watched
   for (const id of WATCHED) watch(id);
 }
@@ -47,6 +48,51 @@ function watch(id, delay = 15000) {
 
 function emit() { listeners.forEach((fn) => fn()); }
 export function onChange(fn) { listeners.add(fn); }
+
+// ---------- who is online (Realtime Database presence) ----------
+// Firestore has no "disconnected" signal and every heartbeat would cost reads, so presence uses the Realtime Database
+// (Spark: free, up to 100 open connections): each open screen keeps one node online/<id> that the server removes by
+// itself when the screen closes (onDisconnect). online/ is public (counts only); onlineU/<id> = e-mail, signed-in only.
+// Needs firebaseConfig.databaseURL; without it the feature stays off.
+export const presenceOn = !isDemo && !!(firebaseConfig && firebaseConfig.databaseURL);
+let rd, rdb, pRef, pURef, pInfo = {};
+export async function presence(info, onList) {
+  if (!presenceOn) return;
+  rd = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js');
+  rdb = rd.getDatabase(fbApp, firebaseConfig.databaseURL);
+  pRef = rd.push(rd.ref(rdb, 'online'));
+  pURef = rd.ref(rdb, 'onlineU/' + pRef.key);
+  pInfo = info;
+  rd.onValue(rd.ref(rdb, '.info/connected'), async (snap) => {
+    if (snap.val() !== true) return;
+    await rd.onDisconnect(pRef).remove();
+    await rd.set(pRef, { ...pInfo, t: rd.serverTimestamp() });
+    presenceUser();
+  });
+  let users = {};
+  const all = { list: {} };
+  const out = () => onList(Object.entries(all.list).map(([id, v]) => ({ id, ...v, u: users[id] || '', me: id === pRef.key })));
+  rd.onValue(rd.ref(rdb, 'online'), (snap) => { all.list = snap.val() || {}; out(); }, () => onList(null));
+  let offU = null;
+  fa.onAuthStateChanged(auth, (u) => {
+    if (offU) { offU(); offU = null; users = {}; out(); }
+    if (u) offU = rd.onValue(rd.ref(rdb, 'onlineU'), (snap) => { users = snap.val() || {}; out(); }, () => {});
+    presenceUser();
+  });
+}
+async function presenceUser() {
+  if (!pURef) return;
+  const u = auth.currentUser;
+  try {
+    if (u && u.email) { await rd.onDisconnect(pURef).remove(); await rd.set(pURef, u.email); }
+    else await rd.remove(pURef);
+  } catch { /* rules not published yet: the count still works */ }
+}
+// the page this screen shows (one small write; the server pushes it to the other screens)
+export function presenceUpdate(patch) {
+  pInfo = { ...pInfo, ...patch };
+  if (pRef) rd.update(pRef, patch).catch(() => {});
+}
 
 // ---------- auth ----------
 export function onAuth(cb) {

@@ -28,6 +28,7 @@
     <div class="top-right">
       <span id="clock" class="clock"></span>
       <span id="liveTag" class="live-off" hidden title="การเชื่อมต่อข้อมูลสดกับ Firebase ขาด — ระบบกำลังเชื่อมต่อใหม่อัตโนมัติ">⚠ ขาดการเชื่อมต่อ</span>
+      <button id="onlineTag" class="online-tag" hidden title="จำนวนเครื่องที่เปิดหน้านี้อยู่ตอนนี้ (กดดูรายละเอียด)"><span class="on-dot"></span><b id="onlineN">0</b> ออนไลน์</button>
       <span id="modeBadge" class="badge"></span>
       <button id="btnNotify" class="btn ghost" title="แจ้งเตือน + เสียง ในเครื่องนี้ เมื่อมีรถใกล้ถึง Due หรือเลย Due ยังไม่ออก (ต้องเปิดหน้าเว็บค้างไว้)">🔕 แจ้งเตือน</button>
       <button id="btnTv" class="btn ghost" title="โหมดจอใหญ่ สำหรับเปิดค้างไว้หน้า Dock (เปลี่ยนหน้าอัตโนมัติ)">📺 จอใหญ่</button>
@@ -376,6 +377,15 @@
         <button type="button" class="btn ghost" data-close>ยกเลิก</button>
         <button type="button" class="btn primary" id="btnRsnSave">บันทึก</button>
       </div>
+    </div>
+  </dialog>
+
+  <dialog id="dlgOnline" class="dlg dlg-online">
+    <div>
+      <h3>👥 ผู้ใช้งานออนไลน์ตอนนี้ <span id="onlineSum" class="muted"></span></h3>
+      <div id="onlineList" class="online-list"></div>
+      <p class="hint">นับตามเครื่อง (เปิดหลายแท็บในเครื่องเดียว = 1 เครื่อง) · อัปเดตทันทีเมื่อมีคนเปิด / ปิดหน้าเว็บ · อีเมลแสดงเฉพาะผู้ที่เข้าสู่ระบบ และเห็นได้เฉพาะเมื่อคุณเข้าสู่ระบบ</p>
+      <div class="dlg-actions"><button type="button" class="btn ghost" data-close>ปิด</button></div>
     </div>
   </dialog>
 

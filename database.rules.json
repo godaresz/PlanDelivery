@@ -1,0 +1,26 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "online": {
+      ".read": true,
+      "$id": {
+        ".write": true,
+        ".validate": "!newData.exists() || (newData.hasChildren(['d', 'pg', 't']) && newData.child('d').isString() && newData.child('d').val().length <= 16 && newData.child('pg').isString() && newData.child('pg').val().length <= 16)",
+        "d": { ".validate": true },
+        "pg": { ".validate": true },
+        "t": { ".validate": "newData.isNumber()" },
+        "tv": { ".validate": "newData.isBoolean()" },
+        "m": { ".validate": "newData.isBoolean()" },
+        "$other": { ".validate": false }
+      }
+    },
+    "onlineU": {
+      ".read": "auth != null",
+      "$id": {
+        ".write": "auth != null || !newData.exists()",
+        ".validate": "!newData.exists() || newData.val() === auth.token.email"
+      }
+    }
+  }
+}

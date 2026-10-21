@@ -48,6 +48,13 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
   Filter bar is shared (hidden on `#data` and `#kpi`).
 - Branding: LINEX logo `icons/linex.png` (from the gatepass project) in the header and footer; credit badge
   "Made By Suwarot Thanabat L150081" fixed top-left on every page, same text and style as the gatepass project (`.made-by`).
+- **Who is online** (21/10/2026): header chip "● N ออนไลน์" (distinct devices, localStorage `sc_dev`; several tabs = 1) + dialog
+  (device type PC / mobile / TV, page, open since; e-mails of signed-in users, visible only when signed in). Uses the Firebase
+  **Realtime Database** (Spark: free, ≤ 100 open connections), not Firestore (no disconnect signal, heartbeats would cost
+  reads): `online/<pushId>` {d, pg, tv, m, t} removed by the server on disconnect (`onDisconnect`), public read;
+  `onlineU/<pushId>` = e-mail, auth read. Rules in `database.rules.json` (publish in the console). Needs
+  `firebaseConfig.databaseURL`; while the database does not exist the chip just stays hidden. A TV screen does not write
+  every page change.
 - `sw.js` + `manifest.webmanifest` + `icons/` — installable app (PWA). Network first (a deploy shows at once), cache only
   when offline; registered only on https.
 - `tests/logic.test.mjs` — business-rule tests (`node --test 'tests/*.test.mjs'`), also run by GitHub Actions on every push.
