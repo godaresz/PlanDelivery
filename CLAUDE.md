@@ -168,11 +168,16 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
      Due mode also counts a pallet already shipped on a truck of an EARLIER shift than its due (sent early) at
      1 − `EARLY_W` (0.8), asked 21/10/2026 "leave them out": leaving them out was worse (WH1 3.1% → 4.1%) because trips are
      fixed — on days with ~6.5% sent early the shift used only ~2% fewer trucks per unit; weight 0.2: WH1 2.9%, WH4 3.2%.
-     **"คาดว่าใช้รถทั้งหมด"** (Est page headline, both modes, 21/10/2026): distinct Shipping No. of the warehouse whose
-     shift overlaps the range (ship-date mode: the chosen date/shift) + Est of the pallets without a Shipping No.
-     (remaining-work rules, calibrated). Back-test on the last 7 days vs real trucks: shift start WH1 7.4% → 4.6%,
-     WH4 4.9% → 3.9%; +2 h 3.7% / 2.5%; +4 h 3.2% / 1.3%; +6 h 1.4% / 1.0% (trucks get Shipping No. early: ~40% already
-     at the shift start). The whole-range Est stays as the model's own figure for comparison.
+     **Forecast by due, stable through the shift** (21/10/2026, user: "at the start of a shift Est = trucks expected from
+     the due; once scanned, Est and the scanned trucks should be as close as possible"): in Due mode (`calib` passed) a
+     pallet's Shipping No. is ignored unless it is an earlier shift's truck, so the number does not move as scanning goes
+     on; the whole-range figure (no `context`) is blended per shift instance half/half with `model.shiftFit` (trucks = my +
+     b × (load − mx) over the last `SHIFT_N` 20 shifts of the letter, own trucks, ridge to proportional); the forecast
+     learns only from days before the range. Est page headline (both modes): "Est ตาม Due ของช่วงนี้" | "ยิง Shipping
+     แล้ว (รถ)" (distinct Shipping No. of the warehouse whose shift overlaps the range) | difference. Back-test, forecast at
+     the shift start vs real trucks of the shift (71 shifts per WH, 24/08–20/10, holiday catch-up / data-gap shifts left
+     out): WH1 2.8% (±1 truck 92%), WH4 3.3% (82%); old model 3.4% / 4.4%. Tried: "scanned trucks + Est of the rest"
+     (converges to the real number but is not a forecast — replaced by this headline).
      Truck summaries count a pallet with lines in two Docks in both nodes: `scaleNodes` scales node counts to the truck's
      distinct pallets / racks when learning.
    - Other pallets: each adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = sum rounded to the nearest truck (.5 up, min 1;

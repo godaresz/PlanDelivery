@@ -336,7 +336,7 @@ export function scaleNodes(t) {
 // Group load = mean pallet-equivalents of trucks whose largest part belongs to the group, by shift (D / N);
 // fewer than 3 trucks -> fall back (shift -> group -> warehouse).
 // Unknown Dock|Window -> group of the same Window, else of the Part No. / Supplier most often shipped with, else new.
-export const LINK_MIN = 2, LINK_SHARE = 0.3, MIN_TRUCKS = 3, WF_LAMBDA = 10, WF_MIN = 6;
+export const LINK_MIN = 2, LINK_SHARE = 0.3, MIN_TRUCKS = 3, WF_LAMBDA = 10, WF_MIN = 6, SHIFT_N = 20;
 export function learnLoadGroups(hist, links = { parts: {}, sups: {} }) {
   const norm = (t) => scaleNodes(t.v === 2 ? t : { ...t, p: t.u || 0, r: 0, n: Object.fromEntries(Object.entries(t.n || {}).map(([k, v]) => [k, [v, 0]])) });
   // skip shift-days whose average load is < 60% of the median shift-day (incomplete uploads, e.g. before Shipping No.)
@@ -440,6 +440,27 @@ export function learnLoadGroups(hist, links = { parts: {}, sups: {} }) {
     winFits.set(key, { a, b, n });
   }
   const winFit = (w, sh) => winFits.get(`${w || '-'}|${sh}`) || null;
+  // Whole-shift line (21/10/2026): trucks of a shift = my + b × (load − mx) over the last SHIFT_N shifts of the same letter
+  // (own trucks, complete data; shifts more than 25% off the median truck count left out), slope pulled to proportional.
+  // Due mode blends it half/half with the pallet sum (back-test Est by due vs real trucks: WH1 3.2% -> 2.8%, WH4 3.4% -> 3.25%).
+  const shiftAgg = new Map();
+  for (const t of trucks) {
+    if (!ownDigit || !t.sn || t.sn[8] !== ownDigit || (t.s !== 'D' && t.s !== 'N')) continue;
+    const k = t.d + t.s, o = shiftAgg.get(k) || [0, 0];
+    o[0] += eq(t.p, t.r); o[1]++; shiftAgg.set(k, o);
+  }
+  const shiftFit = {};
+  for (const L of ['D', 'N']) {
+    let pts = [...shiftAgg].filter(([k, [x, n]]) => k[8] === L && n >= 10 && x / n >= 8).sort((a, b) => a[0].localeCompare(b[0]));
+    const med = pts.map(([, v]) => v[1]).sort((a, b) => a - b)[pts.length >> 1];
+    pts = pts.filter(([, v]) => Math.abs(v[1] - med) <= 0.25 * med).slice(-SHIFT_N).map(([, v]) => v);
+    if (pts.length < 5) continue;
+    const n = pts.length, mx = pts.reduce((a, p) => a + p[0], 0) / n, my = pts.reduce((a, p) => a + p[1], 0) / n;
+    let sxx = 0, sxy = 0;
+    for (const [x, y] of pts) { sxx += (x - mx) ** 2; sxy += (x - mx) * (y - my); }
+    const w = n / (n + 10), b0 = my / mx;
+    shiftFit[L] = { mx, my, b: Math.max(0, w * (sxx ? sxy / sxx : b0) + (1 - w) * b0), n };
+  }
   const viaLink = (map, key) => { const node = key && map && map[key]; return node && par.has(node) ? find(node) : null; };
   const byWindow = new Map();
   for (const k of cnt.keys()) byWindow.set(k.split('|')[1], find(k));
@@ -456,7 +477,7 @@ export function learnLoadGroups(hist, links = { parts: {}, sups: {} }) {
     return [groups.get(k), 'new'];
   };
   const days = trucks.map((t) => t.d).filter(Boolean).sort();
-  return { whMean, whShift, rackFactor, trucks: all.loads.length, groups, groupOf, winFit, winCount: winFits.size, from: days[0], to: days[days.length - 1], skipped };
+  return { whMean, whShift, rackFactor, trucks: all.loads.length, groups, groupOf, winFit, winCount: winFits.size, shiftFit, from: days[0], to: days[days.length - 1], skipped };
 }
 
 // open (not shipped) rows -> buckets by due day + period, per load group.
@@ -489,12 +510,16 @@ const instStart = (k) => new Date(+k.slice(0, 4), +k.slice(4, 6) - 1, +k.slice(6
 // calib (due mode only): {D, N} factors from dueCalib — what the due-dated pallets of recent shifts really needed.
 export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = periodBucket, context = null, now = new Date(), calib = null) {
   const pal = new Map();
-  for (const r of openRows) {
+  const due = !!calib; // due mode: a forecast from the due — a Shipping No. counts only when it is an earlier shift's truck
+  const earlyOf = (sn, w, d) => { const t = sn && /^(\d{8})\d([DN])/i.exec(sn); return !!t && `${t[1]}${t[2].toUpperCase()}` < shiftInst(w, d).key; };
+  for (const r0 of openRows) {
+    const r = due && r0.sn && !earlyOf(r0.sn, r0.w, r0.due) ? { ...r0, tsnOff: true } : r0;
     if (!r.due) continue;
     const k = r.pl || r.k;
     const x = pal.get(k);
-    if (!x) pal.set(k, { due: r.due, rk: r.rk, box: r.bx, d: r.d, w: r.w, p: r.p, s: r.s, sn: r.cf === 1 ? r.sn : '', tsn: r.sn || '', open: !r.done, hasSn: !!r.sn });
-    else { x.box += r.bx; if (r.due < x.due) x.due = r.due; if (!x.sn && r.cf === 1) x.sn = r.sn; if (!x.tsn && r.sn) x.tsn = r.sn; if (!r.done) x.open = true; if (r.sn) x.hasSn = true; }
+    const tsn = r.tsnOff ? '' : r.sn || '';
+    if (!x) pal.set(k, { due: r.due, rk: r.rk, box: r.bx, d: r.d, w: r.w, p: r.p, s: r.s, sn: r.cf === 1 ? r.sn : '', tsn, open: !r.done, hasSn: !!r.sn });
+    else { x.box += r.bx; if (r.due < x.due) x.due = r.due; if (!x.sn && r.cf === 1) x.sn = r.sn; if (!x.tsn && tsn) x.tsn = tsn; if (!r.done) x.open = true; if (r.sn) x.hasSn = true; }
   }
   // load per Window × shift instance: of these pallets (X) and of the shipped part of the view (Xs)
   const eqOf = (rk) => (rk ? model.rackFactor : 1);
@@ -515,7 +540,7 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
       if (X.has(key)) Xs.set(key, (Xs.get(key) || 0) + eqOf(r.rk));
     }
   }
-  const buckets = new Map(), rowsOut = new Map();
+  const buckets = new Map(), rowsOut = new Map(), items = [];
   const via = { Window: 0, Part: 0, Supplier: 0, new: 0 };
   for (const [k, pl] of pal) {
     const bucket = bucketOf(pl.due), bk = bucket.key;
@@ -533,11 +558,12 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
     const cap = g.cap[ws === 'D' || ws === 'N' ? ws : shiftOfTime(pl.due)] || g.mean;
     let e = cap ? eqOf(pl.rk) / cap : 0;
     const wf = fitOf.get(k);
-    let cf = calib ? calib[shiftInst(pl.w, pl.due, pl.tsn).key[8]] || 1 : 1;
+    const cf = calib ? calib[shiftInst(pl.w, pl.due, pl.tsn).key[8]] || 1 : 1;
+    let early = 1;
     // due mode: already shipped on a truck of an EARLIER shift than its due (sent early) -> counts 1 − EARLY_W. Not 0:
     // trips are fixed, so sending ~6.5% early saves only ~2% of the shift's trucks (back-test with weight 0.2: WH1 3.1% ->
     // 2.9%, WH4 3.3% -> 3.2%; leaving them out entirely: WH1 4.1%)
-    if (calib && pl.tsn) { const t = /^(\d{8})\d([DN])/i.exec(pl.tsn); if (t && `${t[1]}${t[2].toUpperCase()}` < shiftInst(pl.w, pl.due).key) cf *= 1 - EARLY_W; }
+    if (due && earlyOf(pl.tsn, pl.w, pl.due)) early = 1 - EARLY_W;
     if (wf) { // Window model: this pallet's part of (fixed trips + slope × load) of its Window in the shift
       const [key, f] = wf, x = X.get(key);
       if (!context || instStart(key.split('|')[1]) > now) {
@@ -547,7 +573,20 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
         e = pl.tsn ? ew : (ew + e) / 2;
       }
     }
-    e *= cf;
+    items.push({ x, e: e * early, cal: cf, inst: shiftInst(pl.w, pl.due).key, load: eqOf(pl.rk) * early, pl });
+  }
+  // due mode, whole range (no context): per shift instance, half pallet sum + half whole-shift line (model.shiftFit)
+  const blend = new Map();
+  if (due && !context && model.shiftFit) {
+    const agg = new Map();
+    for (const it of items) { const a = agg.get(it.inst) || [0, 0]; a[0] += it.e; a[1] += it.load; agg.set(it.inst, a); }
+    for (const [k, [E, L]] of agg) {
+      const f = model.shiftFit[k[8]];
+      if (f && E > 0) blend.set(k, (E + Math.max(0, f.my + f.b * (L - f.mx))) / 2 / E);
+    }
+  }
+  for (const { x, e: e0, cal, inst, pl } of items) {
+    const e = e0 * (blend.get(inst) || 1) * cal;
     x.est += e;
     // estS = estimate of the shipped part only, compared with the trucks actually used for it
     if (truckPallets && pl.sn && truckPallets.get(pl.sn)) { x.act += 1 / truckPallets.get(pl.sn); x.estS += e; x.shipped++; x.trucks.add(pl.sn); }
@@ -586,7 +625,9 @@ export function dueCalib(rows, modelFor, whDigit, cutoff = new Date(), K = 7) {
       if (trucks < 10 || units < 8 * trucks) continue;
       const model = typeof modelFor === 'function' ? modelFor(k.slice(0, 8)) : modelFor;
       if (!model || !model.whMean) continue;
-      const est = estimateTrucks(rs.map((r) => ({ ...r, sn: '', cf: 0, done: false })), model);
+      // as at the shift start: only an earlier shift's Shipping No. is known; due mode (calib 1) = the same forecast as the view
+      const start = rs.map((r) => (r.sn && /^(\d{8})\d([DN])/i.exec(r.sn) && `${r.sn.slice(0, 8)}${r.sn[9].toUpperCase()}` < k ? r : { ...r, sn: '', cf: 0, done: false }));
+      const est = estimateTrucks(start, model, null, undefined, null, new Date(), { D: 1, N: 1 });
       let t = 0; for (const g of est.groups) for (const c of g.cells.values()) t += c.est;
       if (!t || trucks / t < 0.8 || trucks / t > 1.25) continue; // abnormal shift (holiday catch-up, missing rows)
       a += trucks; e += t; n++;

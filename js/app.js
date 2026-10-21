@@ -1536,7 +1536,7 @@ function renderEst(all, scope) {
     sets.forEach((v, k) => truckPallets.set(k, v.size));
   }
   let actTotal = 0, estShipped = 0, openUnits = 0; const actTrucks = new Set();
-  let knownTotal = 0, restEst = 0; // "expected trucks" = trucks that already have a Shipping No. + Est of the rest
+  let knownTotal = 0, restEst = 0, restRound = 0; // headline: trucks scanned so far, Est of the whole range by due
   let totalTrucks = 0, totalEst = 0, totalP = 0, totalR = 0, totalBox = 0;
   const perPeriod = { T: 0, M: 0, A: 0, E: 0 };
   const notes = [];
@@ -1549,9 +1549,9 @@ function renderEst(all, scope) {
     const calib = estCalib(wh, cmp && S.view.start ? S.view.start : new Date());
     if (calib && (calib.n.D || calib.n.N)) notes.push(`${wh}: ปรับตาม Due → รถจริงของกะล่าสุด กะเช้า ×${calib.D.toFixed(2)} (${calib.n.D} กะ) · กะดึก ×${calib.N.toFixed(2)} (${calib.n.N} กะ)`);
     const est = estimateTrucks(work, model, cmp ? truckPallets : null, undefined, cmp ? null : binned, new Date(), calib);
-    // expected trucks of the range (21/10/2026): trucks with a Shipping No. of this warehouse whose shift overlaps the range
-    // are known; only pallets without a Shipping No. are estimated (shifts already started use the group load). Back-test
-    // on the last 7 days (vs real trucks): shift start WH1 7.4% -> 4.6%, WH4 4.9% -> 3.9%; +2 h 3.7% / 2.5%; +4 h 3.2% / 1.3%
+    // headline (21/10/2026): the forecast from the due of the whole range — stable through the shift (a Shipping No. counts
+    // only when it is an earlier shift's truck) — next to the trucks already scanned (distinct Shipping No. of this
+    // warehouse whose shift overlaps the range). Back-test, forecast at the shift start vs real trucks: WH1 2.8%, WH4 3.3%
     const { start: vs, end: ve } = S.view;
     const knownSn = new Set();
     for (const r of binned) {
@@ -1559,9 +1559,11 @@ function renderEst(all, scope) {
       if (!info || `WH${info.whDigit}` !== wh) continue;
       if (S.mode === 'sn' ? snMatch(info) : vs && ve && info.start < ve && info.end > vs) knownSn.add(r.sn);
     }
-    const rest = binned.filter((r) => !r.sn && !r.done);
     knownTotal += knownSn.size;
-    if (rest.length) { const re = estimateTrucks(rest, model, null, undefined, binned, new Date(), calib); for (const o of re.groups) for (const x of o.cells.values()) restEst += x.est; }
+    // the forecast learns only from days before the range (like compare mode), so it is the same number in both modes
+    const fe = cmp ? est : estimateTrucks(binned, startKey ? estModel(wh, startKey) : model, null, undefined, null, new Date(), calib);
+    let whFe = 0; for (const o of fe.groups) for (const x of o.cells.values()) whFe += x.est;
+    restEst += whFe; restRound += whFe > 0 ? Math.max(1, Math.round(whFe)) : 0; // whole trucks per warehouse, like the table
     const known = [...model.groups.values()].filter((g) => !g.isNew);
     const d8 = (x) => (x ? `${x.slice(6, 8)}/${x.slice(4, 6)}/${x.slice(0, 4)}` : '-');
     notes.push(`${wh}: ${known.length} กลุ่ม จากรถ ${model.trucks} คัน (${d8(model.from)} – ${d8(model.to)}) · เฉลี่ยกะเช้า ${f1(model.whShift.D)} · กะดึก ${f1(model.whShift.N)} พาเลท/คัน · Rack = ${model.rackFactor.toFixed(2)} พาเลท · คิดตามรอบรถ ${model.winCount} Window×กะ`
@@ -1630,8 +1632,12 @@ function renderEst(all, scope) {
   }).join('');
   $('#estBody').innerHTML = html;
   const tile = (cls, lbl, v, det = '') => `<div class="kpi ${cls}"><div class="lbl">${lbl}</div><div class="val">${v}</div><div class="det">${det}</div></div>`;
-  const expTile = tile('trip big-exp', 'คาดว่าใช้รถทั้งหมด', `${knownTotal + Math.round(restEst)} <small>คัน</small>`,
-    `จัดรถแล้ว ${knownTotal} คัน (Shipping No.) + Est งานที่ยังไม่มี Shipping No. ${Math.round(restEst)} คัน (${f1(restEst)})`);
+  const fc = restRound, dv = knownTotal - fc;
+  const expTile = `<div class="kpi trip big-exp"><div class="exp-grid">
+      <div><div class="lbl">Est ${S.mode === 'sn' ? 'ทั้งกะ' : 'ตาม Due ของช่วงนี้'}</div><div class="val">${fc} <small>คัน</small></div><div class="det">ทศนิยม ${f1(restEst)} · คิดจาก Due ตั้งแต่ต้นกะ (ไม่เปลี่ยนตาม Shipping No.)</div></div>
+      <div><div class="lbl">ยิง Shipping แล้ว (รถ)</div><div class="val sn">${knownTotal} <small>คัน</small></div><div class="det">Shipping No. ${scope.join(' + ')} ของกะในช่วงนี้</div></div>
+      <div><div class="lbl">ยิงแล้ว − Est</div><div class="val ${Math.abs(dv) <= 1 ? 'ok' : 'off'}">${dv > 0 ? '+' : ''}${dv} <small>คัน</small></div><div class="det">${dv < 0 ? `ยังไม่ถึง Est อีก ${-dv} คัน` : dv > 0 ? 'ใช้รถมากกว่า Est' : 'ตรงกับ Est'}</div></div>
+    </div></div>`;
   $('#estTiles').innerHTML = expTile + (cmp ? [
     tile('trip', 'Est (ทั้งงานในช่วงนี้)', `${totalTrucks} <small>คัน</small>`, `ทศนิยม ${f1(totalEst)} · เรียนรู้จากข้อมูลก่อนช่วงนี้`),
     tile('done', 'ใช้จริง (ส่วนที่ส่งแล้ว)', `${f1(actTotal)} <small>คัน</small>`, `แบ่งตามสัดส่วนพาเลท · รถที่เกี่ยวข้อง ${actTrucks.size} คัน`),
