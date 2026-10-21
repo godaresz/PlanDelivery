@@ -269,4 +269,8 @@ test('11. Est per Window: fixed trips + load (winFit), counted once per shift', 
   const noSn = rows.map((r) => ({ ...r, sn: '' }));
   assert.ok(Math.abs(sum(estimateTrucks(noSn, m)) - half) < 1e-9);
   assert.ok(Math.abs(sum(estimateTrucks(noSn, m, null, undefined, null, new Date(), { D: 0.9, N: 1 })) - 0.9 * half) < 1e-9);
+  // due mode: pallets already on a truck of the previous shift (sent early) count 0.8
+  const early = rows.map((r) => ({ ...r, sn: '202610191N001' }));
+  const onTruck = sum(estimateTrucks(early, m)), dueMode = sum(estimateTrucks(early, m, null, undefined, null, new Date(), { D: 1, N: 1 }));
+  assert.ok(Math.abs(dueMode - 0.8 * onTruck) < 1e-9);
 });

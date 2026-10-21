@@ -533,7 +533,11 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
     const cap = g.cap[ws === 'D' || ws === 'N' ? ws : shiftOfTime(pl.due)] || g.mean;
     let e = cap ? eqOf(pl.rk) / cap : 0;
     const wf = fitOf.get(k);
-    const cf = calib ? calib[shiftInst(pl.w, pl.due, pl.tsn).key[8]] || 1 : 1;
+    let cf = calib ? calib[shiftInst(pl.w, pl.due, pl.tsn).key[8]] || 1 : 1;
+    // due mode: already shipped on a truck of an EARLIER shift than its due (sent early) -> counts 1 − EARLY_W. Not 0:
+    // trips are fixed, so sending ~6.5% early saves only ~2% of the shift's trucks (back-test with weight 0.2: WH1 3.1% ->
+    // 2.9%, WH4 3.3% -> 3.2%; leaving them out entirely: WH1 4.1%)
+    if (calib && pl.tsn) { const t = /^(\d{8})\d([DN])/i.exec(pl.tsn); if (t && `${t[1]}${t[2].toUpperCase()}` < shiftInst(pl.w, pl.due).key) cf *= 1 - EARLY_W; }
     if (wf) { // Window model: this pallet's part of (fixed trips + slope × load) of its Window in the shift
       const [key, f] = wf, x = X.get(key);
       if (!context || instStart(key.split('|')[1]) > now) {
@@ -561,7 +565,7 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
 // Each past shift is estimated with modelFor(its day) = a model learned only from earlier days (a model
 // that already learned that shift hides the error: no gain). Back-test 24/08–20/10 with the ~8 days of rows the app
 // keeps (Est by due vs real trucks), factor applied half way (CAL_W): WH1 4.1% -> 3.4%, WH4 3.6% -> 3.3%.
-export const CAL_W = 0.5;
+export const CAL_W = 0.5, EARLY_W = 0.2;
 export function dueCalib(rows, modelFor, whDigit, cutoff = new Date(), K = 7) {
   const due = new Map(), act = new Map();
   for (const r of rows) {

@@ -165,6 +165,9 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
      version), shifts with real ÷ Est outside 0.8–1.25 left out, applied half way (`CAL_W` 0.5), within 0.8–1.25.
      Back-test vs real trucks of the shift: WH1 3.4% → 3.1%, WH4 4.4% → 3.3%. Some pallets due in a shift always go on
      the previous shift's trucks (~5%), so this cannot reach 0 (best possible ≈ 2.1% / 2.3%).
+     Due mode also counts a pallet already shipped on a truck of an EARLIER shift than its due (sent early) at
+     1 − `EARLY_W` (0.8), asked 21/10/2026 "leave them out": leaving them out was worse (WH1 3.1% → 4.1%) because trips are
+     fixed — on days with ~6.5% sent early the shift used only ~2% fewer trucks per unit; weight 0.2: WH1 2.9%, WH4 3.2%.
      Truck summaries count a pallet with lines in two Docks in both nodes: `scaleNodes` scales node counts to the truck's
      distinct pallets / racks when learning.
    - Other pallets: each adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = sum rounded to the nearest truck (.5 up, min 1;
