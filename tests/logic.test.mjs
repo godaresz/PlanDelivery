@@ -259,8 +259,14 @@ test('11. Est per Window: fixed trips + load (winFit), counted once per shift', 
   const e = estimateHistTrucks(day, m);
   assert.ok(Math.abs(e - (f.a + 6 * f.b + 2)) < 1e-9 && e > 3.2, String(e));
   // estimateTrucks: the fixed trips are spread over the Window's pallets of the shift, not added per pallet
-  const rows = Array.from({ length: 6 }, (_, i) => ({ k: 'P' + i, pl: 'P' + i, w: '1D05', d: 'S5', due: new Date(2026, 9, 20, 9 + i, 0), bx: 1, done: false }));
-  const est = estimateTrucks(rows, m, null, undefined, null, new Date(2026, 9, 20, 6, 0));
-  const tot = est.groups.reduce((a, g) => a + [...g.cells.values()].reduce((x, c) => x + c.est, 0), 0);
-  assert.ok(Math.abs(tot - (f.a + 6 * f.b)) < 1e-9);
+  const rows = Array.from({ length: 6 }, (_, i) => ({ k: 'P' + i, pl: 'P' + i, w: '1D05', d: 'S5', due: new Date(2026, 9, 20, 9 + i, 0), bx: 1, done: false, sn: '202610201D001' }));
+  const sum = (est) => est.groups.reduce((a, g) => a + [...g.cells.values()].reduce((x, c) => x + c.est, 0), 0);
+  // on a truck already: the Window model
+  assert.ok(Math.abs(sum(estimateTrucks(rows, m, null, undefined, null, new Date(2026, 9, 20, 6, 0))) - (f.a + 6 * f.b)) < 1e-9);
+  // due only (no Shipping No. yet): half Window model, half group load; a calibration factor multiplies it
+  const [g] = m.groupOf('S5', '1D05');
+  const half = (f.a + 6 * f.b + 6 / g.cap.D) / 2;
+  const noSn = rows.map((r) => ({ ...r, sn: '' }));
+  assert.ok(Math.abs(sum(estimateTrucks(noSn, m)) - half) < 1e-9);
+  assert.ok(Math.abs(sum(estimateTrucks(noSn, m, null, undefined, null, new Date(), { D: 0.9, N: 1 })) - 0.9 * half) < 1e-9);
 });

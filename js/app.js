@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, parseWindowTimes, normTime, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, WF_MIN, waitIlms, loadedAsDone, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, WF_MIN, dueCalib, waitIlms, loadedAsDone, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -949,7 +949,7 @@ function renderPlan(all, scope, trips) {
     const est = estimateTrucks(shipBinRows(all[wh]), model, null, (due) => {
       const h = place(due);
       return { key: h.key };
-    });
+    }, null, new Date(), estCalib(wh, new Date()));
     const cells = est.groups.flatMap((o, gi) => [...o.cells.entries()].map(([bk, x]) => [bk, x, gi]));
     const alloc = allocateWhole(cells.map(([, x]) => x.est));
     const grp = est.groups.map((o) => ({ g: o.group, openDocks: o.openDocks, openWins: o.openWins, cells: new Map(), n: 0, est: 0 }));
@@ -1505,6 +1505,21 @@ function estModel(wh, beforeKey = '') {
   S.models.set(ck, model);
   return model;
 }
+// Due mode: factor {D, N} from the recent finished shifts (logic.dueCalib); each past day is estimated with a model learned
+// only from the days before it (cached until the truck history or the data changes)
+const calCache = { key: '', models: new Map(), out: new Map() };
+function estCalib(wh, cutoff) {
+  if (S.mode === 'sn') return null;
+  const ver = (x) => (x && x.meta ? x.meta.version : '');
+  const key = `${ver(S.data && S.data.truckhist)}|${WHS.map((w) => ver(S.data && S.data[w])).join('|')}`;
+  if (calCache.key !== key) { calCache.key = key; calCache.models = new Map(); calCache.out = new Map(); }
+  const ck = `${wh}|${ymd(cutoff)}|${cutoff.getHours() >= 20 ? 'N' : cutoff.getHours() * 60 + cutoff.getMinutes() >= 450 ? 'D' : 'n'}`;
+  if (calCache.out.has(ck)) return calCache.out.get(ck);
+  const modelFor = (day) => { const mk = `${wh}|${day}`; if (!calCache.models.has(mk)) calCache.models.set(mk, estModel(wh, day)); return calCache.models.get(mk); };
+  const c = dueCalib(S.view.full[wh], modelFor, wh.slice(2), cutoff); // this warehouse's rows (its own trucks)
+  calCache.out.set(ck, c);
+  return c;
+}
 function renderEst(all, scope) {
   all = Object.fromEntries(Object.entries(all).map(([wh, rows]) => [wh, loadedAsDone(rows)]));
   const cmp = S.estMode === 'cmp';
@@ -1530,7 +1545,9 @@ function renderEst(all, scope) {
     const binned = shipBinRows(all[wh]);
     const work = cmp ? binned : binned.filter((r) => !r.done);
     // open mode: the shipped rows tell which Windows already used their fixed trips in the shift
-    const est = estimateTrucks(work, model, cmp ? truckPallets : null, undefined, cmp ? null : binned);
+    const calib = estCalib(wh, cmp && S.view.start ? S.view.start : new Date());
+    if (calib && (calib.n.D || calib.n.N)) notes.push(`${wh}: ปรับตาม Due → รถจริงของกะล่าสุด กะเช้า ×${calib.D.toFixed(2)} (${calib.n.D} กะ) · กะดึก ×${calib.N.toFixed(2)} (${calib.n.N} กะ)`);
+    const est = estimateTrucks(work, model, cmp ? truckPallets : null, undefined, cmp ? null : binned, new Date(), calib);
     const known = [...model.groups.values()].filter((g) => !g.isNew);
     const d8 = (x) => (x ? `${x.slice(6, 8)}/${x.slice(4, 6)}/${x.slice(0, 4)}` : '-');
     notes.push(`${wh}: ${known.length} กลุ่ม จากรถ ${model.trucks} คัน (${d8(model.from)} – ${d8(model.to)}) · เฉลี่ยกะเช้า ${f1(model.whShift.D)} · กะดึก ${f1(model.whShift.N)} พาเลท/คัน · Rack = ${model.rackFactor.toFixed(2)} พาเลท · คิดตามรอบรถ ${model.winCount} Window×กะ`

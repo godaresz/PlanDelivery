@@ -320,6 +320,16 @@ export function mergeTruckHist(old, add, keepDays = 365, now = new Date()) {
   return out;
 }
 
+// A mixed pallet (lines of several Dock|Window) is counted in each of its nodes in the truck summary, while Est counts a
+// pallet once: scale the node counts so they add up to the truck's distinct pallets / racks (back-test 21/10/2026:
+// unscaled, the Est from due-dated pallets came out ~7% low).
+export function scaleNodes(t) {
+  const n = t.n || {}, vals = Object.values(n).map((v) => (Array.isArray(v) ? v : [v || 0, 0]));
+  const sp = vals.reduce((a, v) => a + v[0], 0), sr = vals.reduce((a, v) => a + v[1], 0);
+  if ((sp <= t.p || !sp) && (sr <= t.r || !sr)) return t;
+  const fp = sp > t.p && sp ? t.p / sp : 1, fr = sr > t.r && sr ? t.r / sr : 1;
+  return { ...t, n: Object.fromEntries(Object.entries(n).map(([k, v0]) => { const v = Array.isArray(v0) ? v0 : [v0 || 0, 0]; return [k, [v[0] * fp, v[1] * fr]]; })) };
+}
 // Load groups learned from truck history: node = Dock|Window. Two nodes are linked when they shared a truck at least
 // 2 times AND in >= 30% of the trucks of the less frequent one; connected nodes form a group ("ไปด้วยกัน").
 // Space: a Rack takes `rackFactor` pallet places = (mean pallets on pallet-only trucks) / (mean racks on rack-only trucks).
@@ -328,7 +338,7 @@ export function mergeTruckHist(old, add, keepDays = 365, now = new Date()) {
 // Unknown Dock|Window -> group of the same Window, else of the Part No. / Supplier most often shipped with, else new.
 export const LINK_MIN = 2, LINK_SHARE = 0.3, MIN_TRUCKS = 3, WF_LAMBDA = 10, WF_MIN = 6;
 export function learnLoadGroups(hist, links = { parts: {}, sups: {} }) {
-  const norm = (t) => (t.v === 2 ? t : { ...t, p: t.u || 0, r: 0, n: Object.fromEntries(Object.entries(t.n || {}).map(([k, v]) => [k, [v, 0]])) });
+  const norm = (t) => scaleNodes(t.v === 2 ? t : { ...t, p: t.u || 0, r: 0, n: Object.fromEntries(Object.entries(t.n || {}).map(([k, v]) => [k, [v, 0]])) });
   // skip shift-days whose average load is < 60% of the median shift-day (incomplete uploads, e.g. before Shipping No.)
   const byDay = new Map();
   for (const [sn, t0] of Object.entries(hist)) { const t = { ...norm(t0), sn }; const k = t.d + t.s; if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(t); }
@@ -476,7 +486,8 @@ const instStart = (k) => new Date(+k.slice(0, 4), +k.slice(4, 6) - 1, +k.slice(6
 // already started keeps the per-pallet group load (the fixed trips mostly left already — back-test at mid-shift: the
 // Window model over-counted, 13% -> 17%); shifts not started yet use the Window model (only the slope when part of a
 // Window's work there was already shipped early).
-export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = periodBucket, context = null, now = new Date()) {
+// calib (due mode only): {D, N} factors from dueCalib — what the due-dated pallets of recent shifts really needed.
+export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = periodBucket, context = null, now = new Date(), calib = null) {
   const pal = new Map();
   for (const r of openRows) {
     if (!r.due) continue;
@@ -522,10 +533,17 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
     const cap = g.cap[ws === 'D' || ws === 'N' ? ws : shiftOfTime(pl.due)] || g.mean;
     let e = cap ? eqOf(pl.rk) / cap : 0;
     const wf = fitOf.get(k);
+    const cf = calib ? calib[shiftInst(pl.w, pl.due, pl.tsn).key[8]] || 1 : 1;
     if (wf) { // Window model: this pallet's part of (fixed trips + slope × load) of its Window in the shift
       const [key, f] = wf, x = X.get(key);
-      if (!context || instStart(key.split('|')[1]) > now) e = eqOf(pl.rk) * ((Xs.get(key) ? 0 : f.a) + f.b * x) / x;
+      if (!context || instStart(key.split('|')[1]) > now) {
+        const ew = eqOf(pl.rk) * ((Xs.get(key) ? 0 : f.a) + f.b * x) / x;
+        // not on a truck yet (due only): half Window model, half group load — back-test Est by due vs real trucks of the
+        // shift (with dueCalib): WH1 3.1%, WH4 3.25% (Window model alone 3.45% / 3.3%, group load alone 3.0% / 3.4%)
+        e = pl.tsn ? ew : (ew + e) / 2;
+      }
     }
+    e *= cf;
     x.est += e;
     // estS = estimate of the shipped part only, compared with the trucks actually used for it
     if (truckPallets && pl.sn && truckPallets.get(pl.sn)) { x.act += 1 / truckPallets.get(pl.sn); x.estS += e; x.shipped++; x.trucks.add(pl.sn); }
@@ -535,12 +553,53 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
   return { buckets: [...buckets.values()].sort((a, b) => a.key.localeCompare(b.key)), groups: list, via };
 }
 
+// Due-mode calibration (21/10/2026): before scanning, a shift's pallets are known only by their due; some are sent early on
+// the previous shift's trucks, backlog rides later ones. Factor per shift (D / N) = real trucks (distinct Shipping No. of
+// this warehouse in that shift) ÷ Est of the pallets due in it (no Shipping No. used), over the last K finished shifts
+// before `cutoff`; shifts with missing data (< 10 trucks or < 8 units per truck) are skipped; fewer than 3 -> 1; kept
+// within 0.8–1.25; a shift whose real ÷ Est is outside 0.8–1.25 is left out (holiday catch-up: backlog due days before).
+// Each past shift is estimated with modelFor(its day) = a model learned only from earlier days (a model
+// that already learned that shift hides the error: no gain). Back-test 24/08–20/10 with the ~8 days of rows the app
+// keeps (Est by due vs real trucks), factor applied half way (CAL_W): WH1 4.1% -> 3.4%, WH4 3.6% -> 3.3%.
+export const CAL_W = 0.5;
+export function dueCalib(rows, modelFor, whDigit, cutoff = new Date(), K = 7) {
+  const due = new Map(), act = new Map();
+  for (const r of rows) {
+    if (r.sn) { const t = /^(\d{8})(\d)([DN])/i.exec(r.sn); if (t && t[2] === String(whDigit)) { const k = t[1] + t[3].toUpperCase(); if (!act.has(k)) act.set(k, new Set()); act.get(k).add(r.sn); } }
+    if (!r.due) continue;
+    const k = shiftInst(r.w, r.due).key;
+    if (!due.has(k)) due.set(k, []);
+    due.get(k).push(r);
+  }
+  const out = { D: 1, N: 1, n: { D: 0, N: 0 } };
+  for (const L of ['D', 'N']) {
+    const keys = [...due.keys()].filter((k) => k[8] === L && instStart(k).getTime() + 12 * 3600000 <= cutoff.getTime()).sort().reverse();
+    let a = 0, e = 0, n = 0;
+    for (const k of keys) {
+      if (n >= K) break;
+      const trucks = act.has(k) ? act.get(k).size : 0, rs = due.get(k);
+      const units = new Set(rs.map((r) => r.pl || r.k)).size;
+      if (trucks < 10 || units < 8 * trucks) continue;
+      const model = typeof modelFor === 'function' ? modelFor(k.slice(0, 8)) : modelFor;
+      if (!model || !model.whMean) continue;
+      const est = estimateTrucks(rs.map((r) => ({ ...r, sn: '', cf: 0, done: false })), model);
+      let t = 0; for (const g of est.groups) for (const c of g.cells.values()) t += c.est;
+      if (!t || trucks / t < 0.8 || trucks / t > 1.25) continue; // abnormal shift (holiday catch-up, missing rows)
+      a += trucks; e += t; n++;
+    }
+    out.n[L] = n;
+    if (n >= 3) out[L] = Math.min(1.25, Math.max(0.8, 1 + (a / e - 1) * CAL_W)); // half way: a full factor over-corrects WH4
+  }
+  return out;
+}
+
 // Est for trucks already in the history (back-test): each Dock|Window node of each truck adds its pallets (racks ×
 // rackFactor) ÷ the load of its group in the truck's shift (window name xDnn / xNnn first, like estimateTrucks).
 export function estimateHistTrucks(trucks, model) {
   let est = 0;
   const X = new Map(); // Window|shift -> load of these trucks (they are one shift)
-  for (const t of trucks) {
+  for (const t0 of trucks) {
+    const t = t0.v === 2 ? scaleNodes(t0) : t0;
     for (const [k, v0] of Object.entries(t.n || {})) {
       const v = Array.isArray(v0) ? v0 : [v0 || 0, 0]; // first-version summaries: units only
       const [d, w] = k.split('|');

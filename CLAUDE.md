@@ -157,6 +157,16 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
      3.3%; 6-h cells WH1 6.1% → 5.0%, WH4 5.8% → 4.2%; 1-h cells WH1 9.5% → 8.1%, WH4 8.3% → 6.4%; remaining work at
      mid-shift ≈ unchanged (13% → 12–13%). Checked and NOT better: recency windows / half-life weights, rolling bias
      correction, node-level fits, blends with the group model.
+   - **Est from due ≈ real trucks** (21/10/2026, user: the Est seen by Due before scanning should match the trucks once
+     Shipping No. exist): a pallet without a Shipping No. costs half Window model + half group load; in Due mode (not
+     ship-date mode) it is multiplied by `dueCalib` {D, N}: real trucks (distinct Shipping No. of the warehouse in the
+     shift) ÷ Est of the pallets due in that shift (Shipping No. ignored) over the last 7 finished shifts of the same letter
+     in the loaded rows (~8 days), each estimated with a model learned only from earlier days (`estCalib`, cached per data
+     version), shifts with real ÷ Est outside 0.8–1.25 left out, applied half way (`CAL_W` 0.5), within 0.8–1.25.
+     Back-test vs real trucks of the shift: WH1 3.4% → 3.1%, WH4 4.4% → 3.3%. Some pallets due in a shift always go on
+     the previous shift's trucks (~5%), so this cannot reach 0 (best possible ≈ 2.1% / 2.3%).
+     Truck summaries count a pallet with lines in two Docks in both nodes: `scaleNodes` scales node counts to the truck's
+     distinct pallets / racks when learning.
    - Other pallets: each adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = sum rounded to the nearest truck (.5 up, min 1;
      changed from ceil on 17/10/2026 — 34.0x showed 35), shared out to cells by largest remainder so cells add up to the total.
    - Mode "เทียบ Est กับที่ใช้จริง": all pallets in the filter (shipped + open), learning only from trucks dated before
