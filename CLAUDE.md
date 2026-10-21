@@ -137,7 +137,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    ended — no WMS fallback any more): a truck with shipped rows AND a real plate is "มีทะเบียนรถแล้ว" (`loading`, not left;
    renamed from "ขึ้นรถแล้ว · รอ ILMS" 21/10/2026). Real plate = `plateOf(Truck License)`: the WMS code is the plate digits +
    3 more (719680202 → 71-9680, 7133262202 → 713-3262; matched ILMS on all 679 trucks checked); blank / zeros / other
-   formats are not a plate. The truck page shows the decoded plate. Late (ออกช้า) =
+   formats are not a plate. The status pill shows the plate itself ("🚚 71-9681"); the truck page's Truck License column
+   shows the decoded plate too. Late (ออกช้า) =
    ILMS departure after Due start. Remaining = not left; overdue = Due start passed.
 11. **Truck estimate (Est, page `#est`)**: open (not shipped) pallets in the current filter. Each pallet counts once
    (bucket of its earliest due; Dock|Window, Part No., Supplier of its first row). Buckets = due day × period ตี 01:00–07:00 /

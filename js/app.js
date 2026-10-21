@@ -726,7 +726,7 @@ function tripStatus(x) {
   if (x.left) return x.late ? `<span class="pill done_late${x.lateMin >= 15 ? ' big' : ''}">ออกแล้ว · ช้า</span>`
     : '<span class="pill done_on">ออกแล้ว · ตรงเวลา</span>';
   const esc2 = isEsc(x) ? ' esc' : '', past = x.od ? (x.odMin >= 1 ? ` · เลย Due ${dur(x.odMin)}` : ' · เพิ่งเลย Due') : '';
-  if (x.loading) return `<span class="pill ${x.od ? 'overdue' : 'loading'}${esc2}" title="ทะเบียน ${esc(x.plate || '')} · ยังไม่มีเวลาออกใน ILMS">มีทะเบียนรถแล้ว${past}</span>`;
+  if (x.loading) return `<span class="pill ${x.od ? 'overdue' : 'loading'}${esc2}" title="มีทะเบียนรถแล้ว · ยังไม่มีเวลาออกใน ILMS">🚚 ${esc(x.plate || '')}${past}</span>`;
   if (x.od) return `<span class="pill overdue${esc2}">ยังไม่ออก${past}</span>`;
   return x.soon ? `<span class="pill soon">ยังไม่ออก · อีก ${x.soonMin} นาทีถึง Due</span>` : '<span class="pill pending">ยังไม่ออก</span>';
 }
@@ -1697,7 +1697,7 @@ function statusPill(r) {
   else if (r.st === ST.DONE_LATE) h = `<span class="pill done_late${r.lateMin >= 15 ? ' big' : ''}">ส่งแล้ว ช้า ${dur(r.lateMin)}</span>`;
   else h = `<span class="pill done_on">ส่งแล้ว ตรงเวลา</span>`;
   if (r.scanned) h += `<span class="pill scan">ยิงแล้ว ยังไม่ขึ้นรถ</span>`;
-  if (r.wait) h += `<span class="pill wait" title="ทะเบียน ${esc(plateOf(r.tr))} · ยังไม่มีเวลาออกใน ILMS">มีทะเบียนรถแล้ว</span>`;
+  if (r.wait) h += `<span class="pill wait" title="มีทะเบียนรถแล้ว · ยังไม่มีเวลาออกใน ILMS">🚚 ${esc(plateOf(r.tr))}</span>`;
   return h;
 }
 
@@ -2456,7 +2456,7 @@ function shiftReportBook(sh) {
   const truckRows = trips.map((x) => ({ 'Shipping No.': x.sn, WH: x.whOwn, Dock: [...x.docks].sort().join(', '),
     'Window Name': [...x.wins].sort().join(', '), 'ทะเบียน': [...x.trucks].join(', '), Pallet: x.p.size, Rack: x.r.size, 'กล่อง': x.box,
     'Due เริ่ม': f(x.dueStart), 'Due สุดท้าย': f(x.dueEnd), 'ออกจริง': f(x.dep), 'แหล่งเวลาออก': x.src,
-    'สถานะ': x.left ? (x.late ? 'ออกช้า' : 'ตรงเวลา') : x.loading ? 'มีทะเบียนรถแล้ว' : x.od ? 'เลย Due ยังไม่ออก' : 'ยังไม่ออก',
+    'สถานะ': x.left ? (x.late ? 'ออกช้า' : 'ตรงเวลา') : x.loading ? `มีทะเบียนรถแล้ว ${x.plate}` : x.od ? 'เลย Due ยังไม่ออก' : 'ยังไม่ออก',
     'ช้า (นาที)': x.late ? x.lateMin : x.od ? x.odMin : '', 'เหตุผล': reasonTxt(x.sn) }));
   const openRows = due.filter((r) => !r.done).map((r) => ({ WH: r.wh, 'Order No.': r.o, Supplier: r.s, 'Part No.': r.p, Dock: r.d,
     'Window Name': r.w, 'Pallet No.': r.pl, 'ประเภท': r.rk ? 'Rack' : 'Pallet', 'Due ที่ใช้': f(r.due),
