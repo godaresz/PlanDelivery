@@ -137,8 +137,9 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    ended — no WMS fallback any more): a truck with shipped rows is "ขึ้นรถแล้ว · รอ ILMS" (`loading`, not left). Late (ออกช้า) =
    ILMS departure after Due start. Remaining = not left; overdue = Due start passed.
 11. **Truck estimate (Est, page `#est`)**: open (not shipped) pallets in the current filter. Each pallet counts once
-   (bucket of its earliest due; Dock|Window, Part No., Supplier of its first row). Buckets = due day × period ตี 00–05 /
-   เช้า 06–11 / บ่าย 12–17 / ทุ่ม 18–23. Learning uses the truck history (`truckhist` v2: pallets/racks per Dock|Window
+   (bucket of its earliest due; Dock|Window, Part No., Supplier of its first row). Buckets = due day × period ตี 01:00–07:00 /
+   เช้า 07:30–11:59 / บ่าย 13:00–19:30 / ทุ่ม 20:00–23:59 (21/10/2026, user; gaps with no dues: 00:xx, 07:01–07:29 → ตี,
+   12:xx, 19:31–19:59 → บ่าย). Learning uses the truck history (`truckhist` v2: pallets/racks per Dock|Window
    + Part No. + Supplier per truck; all uploads incl. archived) + loaded rows. Shift-days whose mean load is < 60% of
    the median shift-day are skipped (incomplete uploads).
    - Load groups ("ไปด้วยกัน"): Dock|Window nodes that shared a truck ≥ 2 times and in ≥ 30% of the less frequent

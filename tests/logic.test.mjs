@@ -274,3 +274,10 @@ test('11. Est per Window: fixed trips + load (winFit), counted once per shift', 
   const onTruck = sum(estimateTrucks(early, m)), dueMode = sum(estimateTrucks(early, m, null, undefined, null, new Date(), { D: 1, N: 1 }));
   assert.ok(Math.abs(dueMode - 0.8 * onTruck) < 1e-9);
 });
+
+test('11. Est periods follow the shifts: ตี 01:00–07:00, เช้า 07:30–11:59, บ่าย 13:00–19:30, ทุ่ม 20:00–23:59', async () => {
+  const { periodOf } = await import('../js/logic.js');
+  const at = (h, m) => periodOf(new Date(2026, 9, 21, h, m));
+  assert.deepEqual([at(0, 30), at(1, 0), at(7, 0), at(7, 29), at(7, 30), at(11, 59), at(12, 30), at(13, 0), at(19, 30), at(19, 59), at(20, 0), at(23, 59)],
+    ['T', 'T', 'T', 'T', 'M', 'M', 'A', 'A', 'A', 'A', 'E', 'E']);
+});

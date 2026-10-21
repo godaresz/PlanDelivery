@@ -251,9 +251,11 @@ export function mergeIlms(oldRows, newRows) {
   return { rows: [...m.values()], skipped };
 }
 // ---------- truck estimate (Est) ----------
-// time-of-day periods (Thai): ตี 00–05, เช้า 06–11, บ่าย 12–17, ทุ่ม 18–23
-export const PERIODS = [['T', 'ตี', '00:00–05:59'], ['M', 'เช้า', '06:00–11:59'], ['A', 'บ่าย', '12:00–17:59'], ['E', 'ทุ่ม', '18:00–23:59']];
-export const periodOf = (d) => PERIODS[Math.floor(d.getHours() / 6)][0];
+// time-of-day periods (Thai), aligned to the shifts — see PERIODS
+// periods follow the shifts (user 21/10/2026): ตี 01:00–07:00 · เช้า 07:30–11:59 · บ่าย 13:00–19:30 · ทุ่ม 20:00–23:59.
+// The gaps hold no dues in the data (0 of ~500k rows): 00:00–00:59 and 07:01–07:29 -> ตี, 12:00–12:59 and 19:31–19:59 -> บ่าย
+export const PERIODS = [['T', 'ตี', '01:00–07:00'], ['M', 'เช้า', '07:30–11:59'], ['A', 'บ่าย', '13:00–19:30'], ['E', 'ทุ่ม', '20:00–23:59']];
+export const periodOf = (d) => { const m = d.getHours() * 60 + d.getMinutes(); return m < 450 ? 'T' : m < 720 ? 'M' : m < 1200 ? 'A' : 'E'; };
 
 // ---------- truck history (compact summary kept for Est, independent of the archive) ----------
 // trucks: { sn: { v: 2, s: 'D'|'N', d: 'YYYYMMDD', p: pallets, r: racks, n: { 'Dock|Window': [pallets, racks] },
