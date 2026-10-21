@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, parseWindowTimes, normTime, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, waitIlms, loadedAsDone, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, WF_MIN, waitIlms, loadedAsDone, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -1527,11 +1527,13 @@ function renderEst(all, scope) {
   const chipList = (arr, hl) => arr.map((x) => `<span class="gchip${hl && hl.has(x) ? ' on' : ''}">${esc(x)}</span>`).join('');
   const html = scope.map((wh) => {
     const model = estModel(wh, cmp ? startKey : '');
-    const work = shipBinRows(cmp ? all[wh] : all[wh].filter((r) => !r.done));
-    const est = estimateTrucks(work, model, cmp ? truckPallets : null);
+    const binned = shipBinRows(all[wh]);
+    const work = cmp ? binned : binned.filter((r) => !r.done);
+    // open mode: the shipped rows tell which Windows already used their fixed trips in the shift
+    const est = estimateTrucks(work, model, cmp ? truckPallets : null, undefined, cmp ? null : binned);
     const known = [...model.groups.values()].filter((g) => !g.isNew);
     const d8 = (x) => (x ? `${x.slice(6, 8)}/${x.slice(4, 6)}/${x.slice(0, 4)}` : '-');
-    notes.push(`${wh}: ${known.length} กลุ่ม จากรถ ${model.trucks} คัน (${d8(model.from)} – ${d8(model.to)}) · เฉลี่ยกะเช้า ${f1(model.whShift.D)} · กะดึก ${f1(model.whShift.N)} พาเลท/คัน · Rack = ${model.rackFactor.toFixed(2)} พาเลท`
+    notes.push(`${wh}: ${known.length} กลุ่ม จากรถ ${model.trucks} คัน (${d8(model.from)} – ${d8(model.to)}) · เฉลี่ยกะเช้า ${f1(model.whShift.D)} · กะดึก ${f1(model.whShift.N)} พาเลท/คัน · Rack = ${model.rackFactor.toFixed(2)} พาเลท · คิดตามรอบรถ ${model.winCount} Window×กะ`
       + (model.skipped.length ? ` · ไม่ใช้กะที่ข้อมูลไม่ครบ: ${model.skipped.map((k) => `${k.slice(6, 8)}/${k.slice(4, 6)} ${k[8]}`).join(', ')}` : ''));
     const ref = `<details class="grp-ref"><summary>กลุ่ม Dock + Window ที่ไปด้วยกัน (เรียนรู้จากประวัติ ${model.trucks} คัน) — ${known.length} กลุ่ม</summary>
       <div class="table-wrap"><table class="tbl"><thead><tr><th>Dock</th><th>Window Name</th><th class="n">รถในประวัติ</th><th class="n">หน่วย/คัน</th><th class="n">กะเช้า (D)</th><th class="n">กะดึก (N)</th></tr></thead><tbody>
@@ -1610,7 +1612,8 @@ function renderEst(all, scope) {
   ].join('');
   $('#estNote').textContent = (S.mode === 'sn' ? 'โหมดวันที่ส่ง: พาเลทที่ Due เป็นวัน/กะอื่น (ส่งล่วงหน้า หรือของค้างเก่า) ถูกจัดเข้าช่วงเวลาในกะของรถ (ใช้เวลา Shipping ถ้าอยู่ในกะ ไม่งั้นใช้ต้น/ท้ายกะ) · ' : '') + `วิธีคิด: จับกลุ่ม Dock + Window ที่เคยขึ้นรถคันเดียวกัน (ด้วยกัน ≥ ${LINK_MIN} ครั้ง และ ≥ ${LINK_SHARE * 100}% ของครั้งที่ขึ้นรถ)
     แล้วคิด Est = หน่วยค้างของกลุ่ม (Pallet + Rack) ÷ หน่วยเฉลี่ยต่อคันของกลุ่มในกะนั้น (กะดูจากชื่อ Window เช่น 1D05 = กะเช้า, 1N05 = กะดึก; ถ้าไม่มีดูจากเวลา Due;
-    น้อยกว่า 3 คันใช้ค่าของกลุ่ม หรือค่าเฉลี่ย WH) · ประวัติรถเก็บสรุปไว้แยก ใช้ได้ทั้งหมดแม้ข้อมูลถูกย้ายเข้าประวัติแล้ว ·
+    น้อยกว่า 3 คันใช้ค่าของกลุ่ม หรือค่าเฉลี่ย WH) · Window ที่มีประวัติ ≥ ${WF_MIN} กะ คิดตามรอบรถของ Window นั้น: รถในกะ = รอบประจำ + จำนวนต่อพาเลท
+    (เรียนจากประวัติแต่ละกะ — รถวิ่งตามรอบ แม้ของน้อยก็ยังมีรอบ; กะที่เริ่มแล้วในโหมดงานค้าง ใช้หน่วยเฉลี่ยต่อคันแบบเดิม) · ประวัติรถเก็บสรุปไว้แยก ใช้ได้ทั้งหมดแม้ข้อมูลถูกย้ายเข้าประวัติแล้ว ·
     Rack คิดพื้นที่เทียบ Pallet ตามประวัติ (รถขน Pallet ล้วน ÷ รถขน Rack ล้วน) · Window ที่ไม่เคยมีในประวัติ จัดกลุ่มจาก Part No. แล้ว Supplier ·
     จำนวนรถเต็มคัน = ปัดผลรวมทศนิยมครั้งเดียวเป็นคันที่ใกล้ที่สุด (.5 ขึ้นไปปัดขึ้น เช่น 34.0 → 34, 34.6 → 35) แล้วแบ่งลงแต่ละช่องตามเศษที่มากที่สุด (ผลรวมทุกช่องเท่ากับยอดรวม) · ${notes.join(' · ')}`;
   return totalTrucks;

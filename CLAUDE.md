@@ -146,7 +146,18 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    - Rack space = rackFactor pallets (mean pallets on pallet-only trucks ÷ mean racks on rack-only trucks; ≈1.0 now).
    - Group load per truck (pallet-equivalents) by shift D/N (< 3 trucks → group mean → WH shift mean). A pallet's shift
      comes from its Window name (xDnn / xNnn), else from its due time.
-   - Each pallet adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = sum rounded to the nearest truck (.5 up, min 1;
+   - **Trucks per Window** (21/10/2026, `model.winFit`): trips run by route, so a Window × shift (letter of the Window,
+     else the due) with ≥ `WF_MIN` (6) shift-days of history uses trucks = a (fixed trips) + b × load, fitted over shift-days
+     of the warehouse's OWN trucks (share of a truck = the Window's part of its load; slope pulled to proportional by
+     `WF_LAMBDA` = 10 pseudo-days; a < 0 → proportional). A shift instance = date + D/N of the due, or the truck's shift when
+     the pallet already has a Shipping No.; a is spread over the Window's pallets of that instance. Remaining-work mode
+     (Est "งานค้าง", `context` = all view rows): a shift that has started keeps the group load below; only the slope for a
+     Window whose work in a not-started shift was partly shipped. Back-test on live data 24/08–20/10 (each day learning
+     only from earlier days, data-gap shifts left out): per shift WH1 3.7% → 2.3% (±1 truck 82% → 95%), WH4 3.4–3.7% →
+     3.3%; 6-h cells WH1 6.1% → 5.0%, WH4 5.8% → 4.2%; 1-h cells WH1 9.5% → 8.1%, WH4 8.3% → 6.4%; remaining work at
+     mid-shift ≈ unchanged (13% → 12–13%). Checked and NOT better: recency windows / half-life weights, rolling bias
+     correction, node-level fits, blends with the group model.
+   - Other pallets: each adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = sum rounded to the nearest truck (.5 up, min 1;
      changed from ceil on 17/10/2026 — 34.0x showed 35), shared out to cells by largest remainder so cells add up to the total.
    - Mode "เทียบ Est กับที่ใช้จริง": all pallets in the filter (shipped + open), learning only from trucks dated before
      the range start. Actual per cell = sum over shipped pallets of 1 ÷ (pallets on its truck), so actual trucks are shared

@@ -237,3 +237,30 @@ test('10. shipped rows on a truck without an ILMS departure count as not shipped
   const [c] = waitIlms(rows, new Map([[sn, { dt: D('2026-10-15 09:00') }]]), now);
   assert.equal(c.done, true); assert.equal(c.wait, undefined);
 });
+
+test('11. Est per Window: fixed trips + load (winFit), counted once per shift', async () => {
+  const { learnLoadGroups, estimateHistTrucks, estimateTrucks } = await import('../js/logic.js');
+  // Window 1D05: every day shift 2 trucks; load 10..28 pallets -> 2 trucks regardless (fixed trips)
+  // Window 1D17: one full truck per 15 pallets (proportional)
+  const hist = {};
+  for (let i = 0; i < 12; i++) {
+    const d = `202609${String(i + 1).padStart(2, '0')}`, small = 5 + (i % 10) * 1;
+    hist[`${d}1D001`] = { v: 2, s: 'D', d, p: small, r: 0, n: { 'S5|1D05': [small, 0] } };
+    hist[`${d}1D002`] = { v: 2, s: 'D', d, p: small, r: 0, n: { 'S5|1D05': [small, 0] } };
+    const k = 1 + (i % 3);
+    for (let j = 0; j < k; j++) hist[`${d}1D1${j}0`] = { v: 2, s: 'D', d, p: 15, r: 0, n: { 'S2|1D17': [15, 0] } };
+  }
+  const m = learnLoadGroups(hist);
+  const f = m.winFit('1D05', 'D');
+  assert.ok(f && f.a > 0.8, 'fixed trips learned for 1D05');
+  assert.ok(Math.abs(m.winFit('1D17', 'D').b - 1 / 15) < 0.01, '1D17 is proportional');
+  // a light day for 1D05 (6 pallets, still its 2 trips): far more than 6 ÷ its mean load (~0.6 truck)
+  const day = [{ s: 'D', n: { 'S5|1D05': [3, 0] } }, { s: 'D', n: { 'S5|1D05': [3, 0] } }, { s: 'D', n: { 'S2|1D17': [15, 0] } }, { s: 'D', n: { 'S2|1D17': [15, 0] } }];
+  const e = estimateHistTrucks(day, m);
+  assert.ok(Math.abs(e - (f.a + 6 * f.b + 2)) < 1e-9 && e > 3.2, String(e));
+  // estimateTrucks: the fixed trips are spread over the Window's pallets of the shift, not added per pallet
+  const rows = Array.from({ length: 6 }, (_, i) => ({ k: 'P' + i, pl: 'P' + i, w: '1D05', d: 'S5', due: new Date(2026, 9, 20, 9 + i, 0), bx: 1, done: false }));
+  const est = estimateTrucks(rows, m, null, undefined, null, new Date(2026, 9, 20, 6, 0));
+  const tot = est.groups.reduce((a, g) => a + [...g.cells.values()].reduce((x, c) => x + c.est, 0), 0);
+  assert.ok(Math.abs(tot - (f.a + 6 * f.b)) < 1e-9);
+});
