@@ -119,7 +119,7 @@ test('9. Shipping No. format: date + WH + D/N + trip; D 07:30–20:00, N 20:00�
 });
 test('10. truck departure: ILMS only; without an ILMS time the truck has not left (loaded, waiting for ILMS)', () => {
   const sn = '202610151D001';
-  const rows = ev([row({ sn, cf: 1, sh: '2026-10-15 08:10', tr: 'T1', dd: '2026-10-15 08:00' }), row({ k: 'B', sn, dd: '2026-10-15 09:00' })], '2026-10-15 10:00');
+  const rows = ev([row({ sn, cf: 1, sh: '2026-10-15 08:10', tr: '719680202', dd: '2026-10-15 08:00' }), row({ k: 'B', sn, dd: '2026-10-15 09:00' })], '2026-10-15 10:00');
   const ilms = new Map([[sn, { dt: D('2026-10-15 08:30') }]]);
   const [a] = byTrip(rows, ilms, D('2026-10-15 10:00'));
   assert.equal(a.src, 'ILMS'); assert.equal(a.left, true); assert.equal(a.lateMin, 30); assert.equal(a.late, true);
@@ -227,7 +227,7 @@ test('10. shipped rows on a truck without an ILMS departure count as not shipped
   const { waitIlms, loadedAsDone } = await import('../js/logic.js');
   const sn = '202610151D001';
   const now = D('2026-10-15 10:00');
-  const rows = ev([row({ sn, cf: 1, sh: '2026-10-15 08:10', tr: 'T1', dd: '2026-10-15 08:00' }), row({ k: 'B', sn, cf: 1, sh: '2026-10-15 08:10', tr: 'T1', dd: '2026-10-15 11:00' })], '2026-10-15 10:00');
+  const rows = ev([row({ sn, cf: 1, sh: '2026-10-15 08:10', tr: '719680202', dd: '2026-10-15 08:00' }), row({ k: 'B', sn, cf: 1, sh: '2026-10-15 08:10', tr: '719680202', dd: '2026-10-15 11:00' })], '2026-10-15 10:00');
   const [a, b] = waitIlms(rows, new Map(), now);
   assert.equal(a.done, false); assert.equal(a.wait, true); assert.equal(a.st, ST.OVERDUE);
   assert.equal(b.wait, true); assert.equal(b.st, ST.PENDING);
@@ -280,4 +280,18 @@ test('11. Est periods follow the shifts: ตี 01:00–07:00, เช้า 07:3
   const at = (h, m) => periodOf(new Date(2026, 9, 21, h, m));
   assert.deepEqual([at(0, 30), at(1, 0), at(7, 0), at(7, 29), at(7, 30), at(11, 59), at(12, 30), at(13, 0), at(19, 30), at(19, 59), at(20, 0), at(23, 59)],
     ['T', 'T', 'T', 'T', 'M', 'M', 'A', 'A', 'A', 'A', 'E', 'E']);
+});
+
+test('10. "มีทะเบียนรถแล้ว" needs a real plate: WMS code -> plate like ILMS', async () => {
+  const { plateOf, waitIlms } = await import('../js/logic.js');
+  assert.equal(plateOf('719680202'), '71-9680');
+  assert.equal(plateOf('7133262202'), '713-3262');
+  assert.equal(plateOf('71-9680'), '71-9680');
+  for (const bad of ['', '0', '000000000', 'T1', '12345', 'ABC-1234']) assert.equal(plateOf(bad), '', bad);
+  const sn = '202610151D001', now = D('2026-10-15 10:00');
+  const rows = ev([row({ sn, cf: 1, sh: '2026-10-15 08:10', tr: '000000000', dd: '2026-10-15 08:00' })], '2026-10-15 10:00');
+  const [a] = waitIlms(rows, new Map(), now);
+  assert.equal(a.done, false); assert.equal(a.loaded, true); assert.equal(a.wait, false); // not shipped, but no plate tag
+  const [t] = byTrip([a], new Map(), now);
+  assert.equal(t.loading, false); assert.equal(t.left, false);
 });

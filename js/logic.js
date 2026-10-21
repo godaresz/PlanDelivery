@@ -102,6 +102,14 @@ export function evaluate(rows, slideMap, rules, now) {
 
 // a shipped row on a truck that has no ILMS departure yet (agreed 20/10/2026) is NOT shipped: it counts as pending /
 // overdue by its due, flagged `wait` ("ขึ้นรถแล้ว รอ ILMS"). Rows without a readable Shipping No. keep the WMS status.
+// WMS truck licence (2nd Truck License column) is a code: plate digits + 3 more, e.g. 719680202 -> 71-9680, 7133262202 ->
+// 713-3262 (21/10/2026: matches the ILMS plate on all 679 trucks checked). '' when it is not a real plate.
+export function plateOf(tr) {
+  const t = String(tr ?? '').trim();
+  if (/^\d{2,3}-\d{4}$/.test(t)) return t;
+  const m = /^(\d{2,3})(\d{4})\d{3}$/.exec(t);
+  return m && !/^0+$/.test(m[1] + m[2]) ? `${m[1]}-${m[2]}` : '';
+}
 export function waitIlms(rows, ilms, now) {
   return rows.map((r) => {
     if (!r.done || !r.sn || !parseTrip(r.sn)) return r;
@@ -110,11 +118,13 @@ export function waitIlms(rows, ilms, now) {
     const st = r.due && r.due < now ? ST.OVERDUE : ST.PENDING;
     const lateMin = r.due ? Math.round((now - r.due) / 60000) : null;
     const soonMin = st === ST.PENDING && r.due ? Math.ceil((r.due - now) / 60000) : null;
-    return { ...r, done: false, wait: true, st, lateMin, soonMin, soon: soonMin !== null && soonMin <= SOON_MIN };
+    // loaded = shipped by WMS but its truck has not left (Est / Plan treat it as on a truck); wait = shown as
+    // "มีทะเบียนรถแล้ว" only with a real plate (user 21/10/2026)
+    return { ...r, done: false, loaded: true, wait: !!plateOf(r.tr), st, lateMin, soonMin, soon: soonMin !== null && soonMin <= SOON_MIN };
   });
 }
 // Est / Plan: pallets loaded on a truck already used its space, so they count as shipped there
-export const loadedAsDone = (rows) => rows.map((r) => (r.wait ? { ...r, done: true } : r));
+export const loadedAsDone = (rows) => rows.map((r) => (r.loaded ? { ...r, done: true } : r));
 
 // group by window for the summary table
 export function byWindow(rows) {
@@ -185,13 +195,14 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
     }
     const x = g.get(r.sn);
     if (r.wh) x.wh.add(r.wh);
-    if (r.tr && !isAllZero(r.tr)) x.trucks.add(r.tr);
+    if (r.tr && !isAllZero(r.tr)) x.trucks.add(plateOf(r.tr) || r.tr); // the plate, as ILMS shows it
     if (r.w) x.wins.add(r.w);
     if (r.d) x.docks.add(r.d);
     (r.rk ? x.r : x.p).add(r.pl || r.k);
     if (r.wh) (x.whU[r.wh] = x.whU[r.wh] || new Set()).add(r.pl || r.k); // pallets + racks per warehouse
     x.box += r.bx; x.rows++;
-    if (r.done || r.wait) x.done++; // loaded on the truck (waiting for ILMS counts too)
+    if (r.done || r.loaded) x.done++; // loaded on the truck (waiting for ILMS counts too)
+    if (!x.plate && r.tr) x.plate = plateOf(r.tr);
     if (r.st === ST.DONE_LATE) { x.lateRows++; x.maxLate = Math.max(x.maxLate, r.lateMin || 0); }
     if (r.due) {
       if (!x.dueStart || r.due < x.dueStart) x.dueStart = r.due;
@@ -215,7 +226,7 @@ export function byTrip(rows, ilms = new Map(), now = new Date()) {
     } else {
       // no ILMS departure time = the truck has NOT left (agreed 20/10/2026), even after its shift ended; pallets
       // scanned onto it only make it "loaded, waiting for ILMS".
-      x.loading = x.done > 0;
+      x.loading = x.done > 0 && !!x.plate; // "มีทะเบียนรถแล้ว": shipped rows AND a real plate (user 21/10/2026)
       x.src = '';
       x.left = false;
       x.dep = null;

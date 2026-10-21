@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, parseWindowTimes, normTime, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, WF_MIN, dueCalib, waitIlms, loadedAsDone, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, WF_MIN, dueCalib, waitIlms, loadedAsDone, plateOf, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -607,7 +607,7 @@ function renderKpis(all, scope) {
           ${leg('pe', 'รอส่ง', pe, `${k.pe.p.size} Pallet · ${k.pe.r.size} Rack · ${k.pe.b.toLocaleString()} กล่อง${k.so.size ? ` · <span class="c-soon">ใกล้ถึง Due ${k.so.size}</span>` : ''}`, ST.PENDING)}
           ${leg('dn', 'ส่งแล้ว', dn, `${k.dn.p.size} Pallet · ${k.dn.r.size} Rack${k.dn.late ? ` · <span class="c-late">ช้า ${k.dn.late} แถว</span>` : ''}`, 'DONE')}
           ${leg('sc', 'ยิงแล้ว ยังไม่ขึ้นรถ', tot(k.sc), `${k.sc.p.size} Pallet · ${k.sc.r.size} Rack · ${k.sc.b.toLocaleString()} กล่อง<br><span class="muted">อยู่ในเลยกำหนด ${k.sc.od.size} · รอส่ง ${tot(k.sc) - k.sc.od.size} (นับรวมข้างบนแล้ว)</span>`, 'SCAN')}
-          ${leg('wt', 'ขึ้นรถแล้ว รอ ILMS', tot(k.wt), `${k.wt.p.size} Pallet · ${k.wt.r.size} Rack · ${k.wt.b.toLocaleString()} กล่อง<br><span class="muted">อยู่ในเลยกำหนด ${k.wt.od.size} · รอส่ง ${tot(k.wt) - k.wt.od.size} (นับรวมข้างบนแล้ว · ยังไม่มีเวลาออกใน ILMS)</span>`, 'WAIT')}
+          ${leg('wt', 'มีทะเบียนรถแล้ว', tot(k.wt), `${k.wt.p.size} Pallet · ${k.wt.r.size} Rack · ${k.wt.b.toLocaleString()} กล่อง<br><span class="muted">อยู่ในเลยกำหนด ${k.wt.od.size} · รอส่ง ${tot(k.wt) - k.wt.od.size} (นับรวมข้างบนแล้ว · ยังไม่มีเวลาออกใน ILMS)</span>`, 'WAIT')}
         </div>
       </div>
       <div class="wh-foot"><span>🚚 รถ <b>${t.used}</b> คัน</span><span class="c-dn">ออกแล้ว <b>${t.left}</b></span><span>เหลือ <b>${t.remain}</b></span>
@@ -626,7 +626,7 @@ function ovTruckBar(trips) {
   const G = [
     ['on', 'ออกแล้ว · ตรงเวลา', trips.filter((x) => x.left && !x.late), 'ONTIME'],
     ['late', 'ออกแล้ว · ช้า', trips.filter((x) => x.left && x.late), 'LATE'],
-    ['load', 'ขึ้นรถแล้ว · รอ ILMS', trips.filter((x) => x.loading && !isEsc(x)), 'LOADX'],
+    ['load', 'มีทะเบียนรถแล้ว', trips.filter((x) => x.loading && !isEsc(x)), 'LOADX'],
     ['soon', `ใกล้ถึง Due ≤ ${SOON_MIN} นาที`, trips.filter((x) => x.soon && !x.loading), 'SOONX'],
     ['pend', 'ยังไม่ถึง Due', trips.filter((x) => !x.left && !x.od && !x.soon && !x.loading), 'NOTDUE'],
     ['od', 'เลย Due ยังไม่ออก', od, 'ODX'],
@@ -726,7 +726,7 @@ function tripStatus(x) {
   if (x.left) return x.late ? `<span class="pill done_late${x.lateMin >= 15 ? ' big' : ''}">ออกแล้ว · ช้า</span>`
     : '<span class="pill done_on">ออกแล้ว · ตรงเวลา</span>';
   const esc2 = isEsc(x) ? ' esc' : '', past = x.od ? (x.odMin >= 1 ? ` · เลย Due ${dur(x.odMin)}` : ' · เพิ่งเลย Due') : '';
-  if (x.loading) return `<span class="pill ${x.od ? 'overdue' : 'loading'}${esc2}">ขึ้นรถแล้ว · รอ ILMS${past}</span>`;
+  if (x.loading) return `<span class="pill ${x.od ? 'overdue' : 'loading'}${esc2}" title="ทะเบียน ${esc(x.plate || '')} · ยังไม่มีเวลาออกใน ILMS">มีทะเบียนรถแล้ว${past}</span>`;
   if (x.od) return `<span class="pill overdue${esc2}">ยังไม่ออก${past}</span>`;
   return x.soon ? `<span class="pill soon">ยังไม่ออก · อีก ${x.soonMin} นาทีถึง Due</span>` : '<span class="pill pending">ยังไม่ออก</span>';
 }
@@ -783,17 +783,17 @@ function truckTiles(T) {
     tile('done', 'ส่งแล้ว (ออกแล้ว)', T.left, `ตรงเวลา ${T.left - T.late} · ช้า ${T.late}`),
     tile('pending', 'เหลือ (ยังไม่ออก)', T.remain, [T.od ? `<span class="c-late">เลยกำหนดแล้ว ${T.od} คัน${T.esc ? ` (เกิน ${escMin()} นาที ${T.esc})` : ''}</span>` : '',
       T.soon ? `<span class="c-soon">ใกล้ถึง Due ≤ ${SOON_MIN} นาที ${T.soon} คัน</span>` : '',
-      T.loading ? `ขึ้นรถแล้ว รอ ILMS ${T.loading} คัน` : ''].filter(Boolean).join(' · ') || 'ยังไม่ถึงกำหนด'),
+      T.loading ? `มีทะเบียนรถแล้ว ${T.loading} คัน` : ''].filter(Boolean).join(' · ') || 'ยังไม่ถึงกำหนด'),
     tile('overdue', 'ออกช้า', T.late, T.left ? `${Math.round((T.late / T.left) * 100)}% ของที่ออกแล้ว` : ''),
   ].join('');
 }
-const TRUCK_CHIPS = [['ALL', 'ทั้งหมด'], ['LEFT', 'ออกแล้ว'], ['LATE', 'ออกช้า'], ['REMAIN', 'ยังไม่ออก'], ['SOON', 'ใกล้ถึง Due'], ['LOADING', 'ขึ้นรถแล้ว · รอ ILMS'], ['OD', 'ยังไม่ออก · เลยกำหนด'], ['ESC', 'เลย Due เกิน'], ['NOTDUE', 'ยังไม่ถึง Due']];
+const TRUCK_CHIPS = [['ALL', 'ทั้งหมด'], ['LEFT', 'ออกแล้ว'], ['LATE', 'ออกช้า'], ['REMAIN', 'ยังไม่ออก'], ['SOON', 'ใกล้ถึง Due'], ['LOADING', 'มีทะเบียนรถแล้ว'], ['OD', 'ยังไม่ออก · เลยกำหนด'], ['ESC', 'เลย Due เกิน'], ['NOTDUE', 'ยังไม่ถึง Due']];
 const truckFilter = { ALL: () => true, LEFT: (x) => x.left, LATE: (x) => x.late, REMAIN: (x) => !x.left, SOON: (x) => x.soon, LOADING: (x) => x.loading, OD: (x) => x.od,
   ESC: (x) => isEsc(x), NOTDUE: (x) => !x.left && !x.od && !x.soon && !x.loading,
   // exact groups of the overview status bar (each truck in one group); shown as an extra chip when picked there
   ONTIME: (x) => x.left && !x.late, LOADX: (x) => x.loading && !isEsc(x), SOONX: (x) => x.soon && !x.loading,
   ODX: (x) => x.od && !isEsc(x) && !x.loading };
-const OV_CHIPS = { ONTIME: 'ออกแล้ว · ตรงเวลา', LOADX: 'ขึ้นรถแล้ว · รอ ILMS (ไม่รวมเลย Due เกิน)', SOONX: 'ใกล้ถึง Due (ยังไม่ขึ้นรถ)', ODX: 'เลย Due ยังไม่ออก (ไม่เกิน)' };
+const OV_CHIPS = { ONTIME: 'ออกแล้ว · ตรงเวลา', LOADX: 'มีทะเบียนรถแล้ว (ไม่รวมเลย Due เกิน)', SOONX: 'ใกล้ถึง Due (ยังไม่ขึ้นรถ)', ODX: 'เลย Due ยังไม่ออก (ไม่เกิน)' };
 
 function renderTrips(list, rows) {
   const showWh = S.wh === 'ALL';
@@ -1697,13 +1697,13 @@ function statusPill(r) {
   else if (r.st === ST.DONE_LATE) h = `<span class="pill done_late${r.lateMin >= 15 ? ' big' : ''}">ส่งแล้ว ช้า ${dur(r.lateMin)}</span>`;
   else h = `<span class="pill done_on">ส่งแล้ว ตรงเวลา</span>`;
   if (r.scanned) h += `<span class="pill scan">ยิงแล้ว ยังไม่ขึ้นรถ</span>`;
-  if (r.wait) h += `<span class="pill wait">ขึ้นรถแล้ว รอ ILMS</span>`;
+  if (r.wait) h += `<span class="pill wait" title="ทะเบียน ${esc(plateOf(r.tr))} · ยังไม่มีเวลาออกใน ILMS">มีทะเบียนรถแล้ว</span>`;
   return h;
 }
 
 const CHIPS = [
   ['ALL', 'ทั้งหมด'], ['OPEN', 'ยังไม่ส่งทั้งหมด'], [ST.OVERDUE, 'เลยกำหนด'], [ST.PENDING, 'รอส่ง'],
-  ['SCAN', 'ยิงแล้ว ยังไม่ขึ้นรถ'], ['WAIT', 'ขึ้นรถแล้ว รอ ILMS'], ['DONE', 'ส่งแล้ว'],
+  ['SCAN', 'ยิงแล้ว ยังไม่ขึ้นรถ'], ['WAIT', 'มีทะเบียนรถแล้ว'], ['DONE', 'ส่งแล้ว'],
 ];
 function detailRows(rows) {
   let r = rows;
@@ -2149,7 +2149,7 @@ function bind() {
       'Pallet No.': r.pl, Type: r.rk ? 'Rack' : 'Pallet', 'Recept Box Count': r.bx, 'Due (WMS)': fmtShowFull(r.wmsDue),
       'Due used': fmtShowFull(r.due), 'Due source': r.src, 'Shipping Time': fmtShowFull(r.shipT), 'Shipping No.': r.sn, 'Truck License': r.tr,
       Status: r.st === ST.OVERDUE ? 'Overdue' : r.st === ST.PENDING ? 'Pending' : r.st === ST.DONE_LATE ? 'Shipped late' : 'Shipped on time',
-      'Scanned no truck': r.scanned ? 'Yes' : '', 'Loaded, no ILMS': r.wait ? 'Yes' : '', 'Late (min)': r.lateMin,
+      'Scanned no truck': r.scanned ? 'Yes' : '', 'Plate, no ILMS': r.wait ? 'Yes' : '', 'Late (min)': r.lateMin,
     }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'Detail');
@@ -2456,7 +2456,7 @@ function shiftReportBook(sh) {
   const truckRows = trips.map((x) => ({ 'Shipping No.': x.sn, WH: x.whOwn, Dock: [...x.docks].sort().join(', '),
     'Window Name': [...x.wins].sort().join(', '), 'ทะเบียน': [...x.trucks].join(', '), Pallet: x.p.size, Rack: x.r.size, 'กล่อง': x.box,
     'Due เริ่ม': f(x.dueStart), 'Due สุดท้าย': f(x.dueEnd), 'ออกจริง': f(x.dep), 'แหล่งเวลาออก': x.src,
-    'สถานะ': x.left ? (x.late ? 'ออกช้า' : 'ตรงเวลา') : x.loading ? 'ขึ้นรถแล้ว · รอ ILMS' : x.od ? 'เลย Due ยังไม่ออก' : 'ยังไม่ออก',
+    'สถานะ': x.left ? (x.late ? 'ออกช้า' : 'ตรงเวลา') : x.loading ? 'มีทะเบียนรถแล้ว' : x.od ? 'เลย Due ยังไม่ออก' : 'ยังไม่ออก',
     'ช้า (นาที)': x.late ? x.lateMin : x.od ? x.odMin : '', 'เหตุผล': reasonTxt(x.sn) }));
   const openRows = due.filter((r) => !r.done).map((r) => ({ WH: r.wh, 'Order No.': r.o, Supplier: r.s, 'Part No.': r.p, Dock: r.d,
     'Window Name': r.w, 'Pallet No.': r.pl, 'ประเภท': r.rk ? 'Rack' : 'Pallet', 'Due ที่ใช้': f(r.due),

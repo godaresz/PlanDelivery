@@ -83,7 +83,7 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    (the 2nd `Truck License` column, column Y) not blank and not all zeros.
    **…but only once its truck left** (agreed 20/10/2026): a shipped row whose Shipping No. has no ILMS departure yet is
    NOT shipped on the view (`waitIlms` after `evaluate`: `done:false`, `wait:true`, pending / overdue by its due; donut legend
-   + detail chip "ขึ้นรถแล้ว รอ ILMS"). Est / Plan treat these rows as loaded (`loadedAsDone`); the truck history, merge and
+   + detail chip "มีทะเบียนรถแล้ว", tagged only with a real plate (`wait`); `loaded` marks every such row). Est / Plan treat these rows as loaded (`loadedAsDone`, `r.loaded`); the truck history, merge and
    archive still use the WMS status. Rows without a readable Shipping No. keep the WMS status.
 3. **Scanned, not loaded (ยิงแล้ว ยังไม่ขึ้นรถ)** = Shipping Time present but no valid truck → counts as NOT shipped.
 4. Not shipped: due < now → Overdue (เลยกำหนด), else Pending (รอส่ง). Pending with due ≤ `rules.soonMin` (default 30, set in the rules dialog; `SOON_MIN`/`setSoonMin`) min away → "ใกล้ถึง Due"
@@ -134,7 +134,10 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    a COMPLETE-locked truck still takes a later file's Depart Origin once). Only WH1/WH4
    numbers kept; uploads merge by Truckplan No (newer wins unless the stored truck is `COMPLETE` = locked), never deleted.
    Departure = ILMS time above if matched. **No ILMS time = the truck has NOT left** (agreed 20/10/2026, also after its shift
-   ended — no WMS fallback any more): a truck with shipped rows is "ขึ้นรถแล้ว · รอ ILMS" (`loading`, not left). Late (ออกช้า) =
+   ended — no WMS fallback any more): a truck with shipped rows AND a real plate is "มีทะเบียนรถแล้ว" (`loading`, not left;
+   renamed from "ขึ้นรถแล้ว · รอ ILMS" 21/10/2026). Real plate = `plateOf(Truck License)`: the WMS code is the plate digits +
+   3 more (719680202 → 71-9680, 7133262202 → 713-3262; matched ILMS on all 679 trucks checked); blank / zeros / other
+   formats are not a plate. The truck page shows the decoded plate. Late (ออกช้า) =
    ILMS departure after Due start. Remaining = not left; overdue = Due start passed.
 11. **Truck estimate (Est, page `#est`)**: open (not shipped) pallets in the current filter. Each pallet counts once
    (bucket of its earliest due; Dock|Window, Part No., Supplier of its first row). Buckets = due day × period ตี 01:00–07:00 /
