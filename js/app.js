@@ -1536,6 +1536,7 @@ function renderEst(all, scope) {
     sets.forEach((v, k) => truckPallets.set(k, v.size));
   }
   let actTotal = 0, estShipped = 0, openUnits = 0; const actTrucks = new Set();
+  let knownTotal = 0, restEst = 0; // "expected trucks" = trucks that already have a Shipping No. + Est of the rest
   let totalTrucks = 0, totalEst = 0, totalP = 0, totalR = 0, totalBox = 0;
   const perPeriod = { T: 0, M: 0, A: 0, E: 0 };
   const notes = [];
@@ -1548,6 +1549,19 @@ function renderEst(all, scope) {
     const calib = estCalib(wh, cmp && S.view.start ? S.view.start : new Date());
     if (calib && (calib.n.D || calib.n.N)) notes.push(`${wh}: ปรับตาม Due → รถจริงของกะล่าสุด กะเช้า ×${calib.D.toFixed(2)} (${calib.n.D} กะ) · กะดึก ×${calib.N.toFixed(2)} (${calib.n.N} กะ)`);
     const est = estimateTrucks(work, model, cmp ? truckPallets : null, undefined, cmp ? null : binned, new Date(), calib);
+    // expected trucks of the range (21/10/2026): trucks with a Shipping No. of this warehouse whose shift overlaps the range
+    // are known; only pallets without a Shipping No. are estimated (shifts already started use the group load). Back-test
+    // on the last 7 days (vs real trucks): shift start WH1 7.4% -> 4.6%, WH4 4.9% -> 3.9%; +2 h 3.7% / 2.5%; +4 h 3.2% / 1.3%
+    const { start: vs, end: ve } = S.view;
+    const knownSn = new Set();
+    for (const r of binned) {
+      const info = r.sn && parseTrip(r.sn);
+      if (!info || `WH${info.whDigit}` !== wh) continue;
+      if (S.mode === 'sn' ? snMatch(info) : vs && ve && info.start < ve && info.end > vs) knownSn.add(r.sn);
+    }
+    const rest = binned.filter((r) => !r.sn && !r.done);
+    knownTotal += knownSn.size;
+    if (rest.length) { const re = estimateTrucks(rest, model, null, undefined, binned, new Date(), calib); for (const o of re.groups) for (const x of o.cells.values()) restEst += x.est; }
     const known = [...model.groups.values()].filter((g) => !g.isNew);
     const d8 = (x) => (x ? `${x.slice(6, 8)}/${x.slice(4, 6)}/${x.slice(0, 4)}` : '-');
     notes.push(`${wh}: ${known.length} กลุ่ม จากรถ ${model.trucks} คัน (${d8(model.from)} – ${d8(model.to)}) · เฉลี่ยกะเช้า ${f1(model.whShift.D)} · กะดึก ${f1(model.whShift.N)} พาเลท/คัน · Rack = ${model.rackFactor.toFixed(2)} พาเลท · คิดตามรอบรถ ${model.winCount} Window×กะ`
@@ -1616,7 +1630,9 @@ function renderEst(all, scope) {
   }).join('');
   $('#estBody').innerHTML = html;
   const tile = (cls, lbl, v, det = '') => `<div class="kpi ${cls}"><div class="lbl">${lbl}</div><div class="val">${v}</div><div class="det">${det}</div></div>`;
-  $('#estTiles').innerHTML = cmp ? [
+  const expTile = tile('trip big-exp', 'คาดว่าใช้รถทั้งหมด', `${knownTotal + Math.round(restEst)} <small>คัน</small>`,
+    `จัดรถแล้ว ${knownTotal} คัน (Shipping No.) + Est งานที่ยังไม่มี Shipping No. ${Math.round(restEst)} คัน (${f1(restEst)})`);
+  $('#estTiles').innerHTML = expTile + (cmp ? [
     tile('trip', 'Est (ทั้งงานในช่วงนี้)', `${totalTrucks} <small>คัน</small>`, `ทศนิยม ${f1(totalEst)} · เรียนรู้จากข้อมูลก่อนช่วงนี้`),
     tile('done', 'ใช้จริง (ส่วนที่ส่งแล้ว)', `${f1(actTotal)} <small>คัน</small>`, `แบ่งตามสัดส่วนพาเลท · รถที่เกี่ยวข้อง ${actTrucks.size} คัน`),
     tile(Math.abs(estShipped - actTotal) <= 0.1 * Math.max(actTotal, 1) ? 'done' : 'overdue', 'ต่าง (Est − จริง) ส่วนที่ส่งแล้ว',
@@ -1626,7 +1642,7 @@ function renderEst(all, scope) {
     tile('trip', 'Est รถที่ต้องใช้', `${totalTrucks} <small>คัน</small>`, `${scope.join(' + ')} · ทศนิยม ${f1(totalEst)}`),
     tile('pending', 'งานค้าง (ยังไม่ Shipping)', `${totalP + totalR} <small>หน่วย</small>`, `${totalP} Pallet · ${totalR} Rack · ${totalBox.toLocaleString()} กล่อง`),
     ...PERIODS.map(([k, n, t]) => tile('scan', `ช่วง${n}`, `${perPeriod[k]} <small>คัน</small>`, t)),
-  ].join('');
+  ].join(''));
   $('#estNote').textContent = (S.mode === 'sn' ? 'โหมดวันที่ส่ง: พาเลทที่ Due เป็นวัน/กะอื่น (ส่งล่วงหน้า หรือของค้างเก่า) ถูกจัดเข้าช่วงเวลาในกะของรถ (ใช้เวลา Shipping ถ้าอยู่ในกะ ไม่งั้นใช้ต้น/ท้ายกะ) · ' : '') + `วิธีคิด: จับกลุ่ม Dock + Window ที่เคยขึ้นรถคันเดียวกัน (ด้วยกัน ≥ ${LINK_MIN} ครั้ง และ ≥ ${LINK_SHARE * 100}% ของครั้งที่ขึ้นรถ)
     แล้วคิด Est = หน่วยค้างของกลุ่ม (Pallet + Rack) ÷ หน่วยเฉลี่ยต่อคันของกลุ่มในกะนั้น (กะดูจากชื่อ Window เช่น 1D05 = กะเช้า, 1N05 = กะดึก; ถ้าไม่มีดูจากเวลา Due;
     น้อยกว่า 3 คันใช้ค่าของกลุ่ม หรือค่าเฉลี่ย WH) · Window ที่มีประวัติ ≥ ${WF_MIN} กะ คิดตามรอบรถของ Window นั้น: รถในกะ = รอบประจำ + จำนวนต่อพาเลท

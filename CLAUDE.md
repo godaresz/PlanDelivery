@@ -168,6 +168,11 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
      Due mode also counts a pallet already shipped on a truck of an EARLIER shift than its due (sent early) at
      1 − `EARLY_W` (0.8), asked 21/10/2026 "leave them out": leaving them out was worse (WH1 3.1% → 4.1%) because trips are
      fixed — on days with ~6.5% sent early the shift used only ~2% fewer trucks per unit; weight 0.2: WH1 2.9%, WH4 3.2%.
+     **"คาดว่าใช้รถทั้งหมด"** (Est page headline, both modes, 21/10/2026): distinct Shipping No. of the warehouse whose
+     shift overlaps the range (ship-date mode: the chosen date/shift) + Est of the pallets without a Shipping No.
+     (remaining-work rules, calibrated). Back-test on the last 7 days vs real trucks: shift start WH1 7.4% → 4.6%,
+     WH4 4.9% → 3.9%; +2 h 3.7% / 2.5%; +4 h 3.2% / 1.3%; +6 h 1.4% / 1.0% (trucks get Shipping No. early: ~40% already
+     at the shift start). The whole-range Est stays as the model's own figure for comparison.
      Truck summaries count a pallet with lines in two Docks in both nodes: `scaleNodes` scales node counts to the truck's
      distinct pallets / racks when learning.
    - Other pallets: each adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = sum rounded to the nearest truck (.5 up, min 1;

@@ -661,3 +661,7 @@ input.t24.bad { border-color: #EF4444; box-shadow: 0 0 0 3px #FEE2E2; }
 .on-who b .on-me, .on-who .on-me { align-self: flex-start; }
 .on-who > span.on-me { display: inline-block; }
 .dlg-online { width: min(520px, 94vw); }
+/* Est: expected trucks = trucks with a Shipping No. + Est of the rest (full-width headline) */
+#estTiles .kpi.big-exp { grid-column: 1 / -1; background: linear-gradient(120deg, #EDE9FE, #FFF 70%); border-color: #7C3AED; }
+#estTiles .kpi.big-exp .val { font-size: 34px; }
+#estTiles:has(.kpi:nth-child(5):last-child) { grid-template-columns: repeat(4, 1fr); }
