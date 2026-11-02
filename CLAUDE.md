@@ -207,8 +207,13 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Output (2/11/2026, user: "จัดรถแล้ว" in full + time map + chart): Excel adds sheets "จัดรถแล้ว (ข้อมูลเต็ม)" (every
    truck counted on the chart: shift, trip, plate, Dock, Window, pallets / racks / boxes, Due start / end, chart hour,
    departure + source, vs Due start, status, reason) and "Time map จัดรถแล้ว" (truck × hour: pallets + racks by due hour,
-   "ออก HH:MM" in the departure hour, + trucks per hour row); button "⇩ กราฟ (PNG)" saves the chart (`exportPlanPng`,
-   computed styles inlined, title + range + legend).
+   numbers only, departure in its own columns, + trucks per hour row); button "⇩ กราฟ (PNG)" saves the chart
+   (`exportPlanPng`, computed styles inlined, title + range + legend). **Native Excel chart** (user: "ดึง excel มาเป็นกราฟ"):
+   first sheet "กราฟ" = hour, Plan, assigned, left, running totals + an editable combo chart (bars Plan #BFDBFE, line
+   assigned #7C3AED, markers left #10B981, value labels), landscape fit-to-page; the time map gets a white → purple colour
+   scale. SheetJS writes no charts, so `addExcelChart` opens the xlsx with JSZip (jsdelivr jszip@3.10.1, loaded on first
+   export) and adds chart1.xml / drawing1.xml / rels / content types; worksheet parts are put in schema order (`putBefore`)
+   or Excel asks to repair; if anything fails the plain workbook is downloaded.
 
 13. **Truck reasons** (19/10/2026): late or overdue trucks get a "เหตุผล" column on the truck page; signed-in editors pick a
    reason (REASONS list in app.js: รถมาช้า, ของไม่พร้อม, โหลดช้า, Dock ไม่ว่าง, รอเอกสาร, คุณภาพ, ระบบ, ลูกค้าขอเลื่อน, อื่น ๆ)

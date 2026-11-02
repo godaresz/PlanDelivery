@@ -1496,25 +1496,103 @@ function exportPlan() {
   }
   const tmap = assigned.map((t) => {
     const m = units.get(t.sn), o = { WH: t.whOwn, 'Shipping No.': t.sn, 'ทะเบียนรถ': [...t.trucks].join(', ') || t.plate || '', 'Due เริ่ม': f(t.dueStart) };
-    const depKey = t.left && t.dep ? x.hk(t.dep) : '';
-    for (const k of cols) {
-      const n = m.get(k) || 0, out = k === depKey ? `ออก ${pad(t.dep.getHours())}:${pad(t.dep.getMinutes())}` : '';
-      o[lbl.get(k)] = n && out ? `${n} · ${out}` : n || out || '';
-    }
-    if (m.get('after')) o['หลังช่วง'] = m.get('after');
+    for (const k of cols) o[lbl.get(k)] = m.get(k) || ''; // numbers only: the sheet is coloured as a heat map
+    o['หลังช่วง'] = m.get('after') || '';
     o['รวม Pallet+Rack'] = [...m.values()].reduce((a, b) => a + b, 0);
+    o['ออกจริง'] = t.left && t.dep ? f(t.dep) : '';
+    o['ชั่วโมงที่ออก'] = t.left && t.dep ? lbl.get(x.hk(t.dep)) || f(t.dep) : '';
     o['สถานะ'] = statusTh(t);
     return o;
   });
   const tsum = { WH: 'รวม', 'Shipping No.': `${assigned.length} คัน` };
   for (const k of cols) tsum[lbl.get(k)] = assigned.filter((t) => hourOf.get(t.sn) === k).length || '';
   if (tmap.length) tmap.push({}, { ...tsum, 'Due เริ่ม': 'รถจัดแล้ว (คัน, ตาม Due เริ่ม)' });
+  // sheet "กราฟ": the chart's series (all warehouses in view) — a native Excel chart is drawn from it (addExcelChart)
+  const sumW = (h, fn) => x.scope.reduce((a, w) => a + fn(h.wh[w]), 0);
+  const graph = x.list.map((h) => { const c = x.cum.get(h.key);
+    return { 'ช่วงเวลา': lbl.get(h.key), 'รถตาม Plan': sumW(h, (c2) => c2.n), 'จัดรถแล้ว (Shipping No.)': sumW(h, (c2) => c2.sn.size),
+      'ออกแล้ว': sumW(h, (c2) => c2.left.size), 'สะสม Plan': c.n, 'สะสม ออกแล้ว': c.left }; });
   const wb = XLSX.utils.book_new();
+  const gs = XLSX.utils.json_to_sheet(graph); gs['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 22 }, { wch: 10 }, { wch: 11 }, { wch: 13 }];
+  XLSX.utils.book_append_sheet(wb, gs, 'กราฟ');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Plan รายชั่วโมง');
   if (full.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(full), 'จัดรถแล้ว (ข้อมูลเต็ม)');
-  if (tmap.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tmap), 'Time map จัดรถแล้ว');
+  if (tmap.length) {
+    const ts = XLSX.utils.json_to_sheet(tmap);
+    ts['!cols'] = [{ wch: 5 }, { wch: 15 }, { wch: 10 }, { wch: 16 }, ...cols.map(() => ({ wch: 9 }))];
+    XLSX.utils.book_append_sheet(wb, ts, 'Time map จัดรถแล้ว');
+  }
   if (dock.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dock), 'แยกตาม Dock');
-  XLSX.writeFile(wb, `PlanTruck_${stamp()}.xlsx`);
+  const name = `PlanTruck_${stamp()}.xlsx`;
+  const title = `Plan รถรายชั่วโมง · ${x.scope.join(' + ')}`;
+  addExcelChart(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }), { rows: graph.length, title,
+    heat: tmap.length ? { sheet: wb.SheetNames.indexOf('Time map จัดรถแล้ว') + 1, firstCol: 4, lastCol: 4 + cols.length, rows: assigned.length } : null })
+    .then((blob) => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); })
+    .catch((e) => { toast('ใส่กราฟใน Excel ไม่สำเร็จ — ดาวน์โหลดแบบไม่มีกราฟแทน (' + e.message + ')', true); XLSX.writeFile(wb, name); });
+}
+
+// Native Excel chart (SheetJS writes no charts): open the xlsx with JSZip and add a drawing + a combo chart on sheet 1
+// ("กราฟ": A = hour, B = Plan bars, C = assigned line, D = left markers) and a colour scale on the time map sheet.
+const XL = { c: 'http://schemas.openxmlformats.org/drawingml/2006/chart', a: 'http://schemas.openxmlformats.org/drawingml/2006/main',
+  r: 'http://schemas.openxmlformats.org/officeDocument/2006/relationships', xdr: 'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing' };
+let jszipP = null;
+const loadJsZip = () => jszipP || (jszipP = new Promise((ok, bad) => {
+  if (window.JSZip) { ok(window.JSZip); return; }
+  const sc = document.createElement('script'); sc.src = 'https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js';
+  sc.onload = () => ok(window.JSZip); sc.onerror = () => { jszipP = null; bad(new Error('โหลด JSZip ไม่ได้')); }; document.head.appendChild(sc);
+}));
+const colName = (i) => { let s = ''; for (i++; i; i = Math.floor((i - 1) / 26)) s = String.fromCharCode(65 + ((i - 1) % 26)) + s; return s; };
+const xmlEsc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+async function addExcelChart(buf, { rows, title, heat }) {
+  const JSZip = await loadJsZip(), zip = await JSZip.loadAsync(buf);
+  const n = rows + 1, ref = (col) => `'กราฟ'!$${col}$2:$${col}$${n}`, cat = `<c:cat><c:strRef><c:f>${ref('A')}</c:f></c:strRef></c:cat>`;
+  const ser = (i, col, extra) => `<c:ser><c:idx val="${i}"/><c:order val="${i}"/><c:tx><c:strRef><c:f>'กราฟ'!$${col}$1</c:f></c:strRef></c:tx>${extra}${cat}<c:val><c:numRef><c:f>${ref(col)}</c:f></c:numRef></c:val>`;
+  const lbls = (pos, rgb) => `<c:dLbls><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="900" b="1"><a:solidFill><a:srgbClr val="${rgb}"/></a:solidFill></a:defRPr></a:pPr><a:endParaRPr lang="th-TH"/></a:p></c:txPr><c:dLblPos val="${pos}"/><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>`;
+  const axes = '<c:axId val="1001"/><c:axId val="1002"/>';
+  const chart = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<c:chartSpace xmlns:c="${XL.c}" xmlns:a="${XL.a}" xmlns:r="${XL.r}"><c:roundedCorners val="0"/><c:chart>
+<c:title><c:tx><c:rich><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1400" b="1"/></a:pPr><a:r><a:rPr lang="th-TH" sz="1400" b="1"/><a:t>${xmlEsc(title)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>
+<c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>
+<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>${ser(0, 'B', '<c:spPr><a:solidFill><a:srgbClr val="BFDBFE"/></a:solidFill></c:spPr><c:invertIfNegative val="0"/>' + lbls('outEnd', '1E3A8A'))}</c:ser><c:gapWidth val="60"/>${axes}</c:barChart>
+<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>
+${ser(1, 'C', '<c:spPr><a:ln w="31750"><a:solidFill><a:srgbClr val="7C3AED"/></a:solidFill></a:ln></c:spPr><c:marker><c:symbol val="circle"/><c:size val="6"/><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln w="19050"><a:solidFill><a:srgbClr val="7C3AED"/></a:solidFill></a:ln></c:spPr></c:marker>' + lbls('r', '6D28D9'))}<c:smooth val="0"/></c:ser>
+${ser(2, 'D', '<c:spPr><a:ln w="28575"><a:noFill/></a:ln></c:spPr><c:marker><c:symbol val="circle"/><c:size val="8"/><c:spPr><a:solidFill><a:srgbClr val="10B981"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:ln></c:spPr></c:marker>' + lbls('l', '047857'))}<c:smooth val="0"/></c:ser>
+<c:marker val="1"/>${axes}</c:lineChart>
+<c:catAx><c:axId val="1001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:numFmt formatCode="General" sourceLinked="1"/><c:tickLblPos val="nextTo"/><c:txPr><a:bodyPr rot="-2700000"/><a:p><a:pPr><a:defRPr sz="800"/></a:pPr><a:endParaRPr lang="th-TH"/></a:p></c:txPr><c:crossAx val="1002"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx>
+<c:valAx><c:axId val="1002"/><c:scaling><c:orientation val="minMax"/><c:min val="0"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines><c:spPr><a:ln><a:solidFill><a:srgbClr val="E5E7EB"/></a:solidFill></a:ln></c:spPr></c:majorGridlines><c:title><c:tx><c:rich><a:bodyPr rot="-5400000"/><a:p><a:r><a:t>คัน</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:numFmt formatCode="General" sourceLinked="1"/><c:tickLblPos val="nextTo"/><c:crossAx val="1001"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx>
+</c:plotArea><c:legend><c:legendPos val="b"/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart></c:chartSpace>`;
+  const drawing = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="${XL.xdr}" xmlns:a="${XL.a}" xmlns:r="${XL.r}" xmlns:c="${XL.c}"><xdr:twoCellAnchor>
+<xdr:from><xdr:col>7</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
+<xdr:to><xdr:col>${7 + Math.max(14, Math.ceil(rows * 1.1))}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>26</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Plan chart"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>
+<a:graphic><a:graphicData uri="${XL.c}"><c:chart r:id="rId1"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>`;
+  const rel = (id, type, target) => `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/${type}" Target="${target}"/>`;
+  const rels = (body) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${body}</Relationships>`;
+  zip.file('xl/charts/chart1.xml', chart);
+  zip.file('xl/drawings/drawing1.xml', drawing);
+  zip.file('xl/drawings/_rels/drawing1.xml.rels', rels(rel('rId1', 'chart', '../charts/chart1.xml')));
+  const sRels = 'xl/worksheets/_rels/sheet1.xml.rels', old = zip.file(sRels) ? await zip.file(sRels).async('string') : rels('');
+  zip.file(sRels, old.replace('</Relationships>', rel('rIdPlanChart', 'drawing', '../drawings/drawing1.xml') + '</Relationships>'));
+  // Excel requires the worksheet children in schema order: put each part before the first later element that exists
+  const putBefore = (xml, frag, tags) => { for (const t of tags) { const i = xml.indexOf('<' + t); if (i >= 0) return xml.slice(0, i) + frag + xml.slice(i); } return xml; };
+  let s1 = await zip.file('xl/worksheets/sheet1.xml').async('string');
+  if (!/xmlns:r=/.test(s1)) s1 = s1.replace('<worksheet ', `<worksheet xmlns:r="${XL.r}" `);
+  if (!/<sheetPr/.test(s1)) s1 = putBefore(s1, '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>', ['dimension', 'sheetViews', 'sheetFormatPr', 'cols', 'sheetData']);
+  if (!/<pageSetup/.test(s1)) s1 = putBefore(s1, (/<pageMargins/.test(s1) ? '' : '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/>')
+    + '<pageSetup orientation="landscape" fitToWidth="1" fitToHeight="1"/>', /<pageMargins/.test(s1) ? ['headerFooter', 'rowBreaks', 'colBreaks', 'ignoredErrors', 'drawing', '/worksheet'] : ['headerFooter', 'rowBreaks', 'colBreaks', 'ignoredErrors', 'drawing', '/worksheet']);
+  zip.file('xl/worksheets/sheet1.xml', putBefore(s1, '<drawing r:id="rIdPlanChart"/>', ['legacyDrawing', 'picture', 'oleObjects', 'tableParts', 'extLst', '/worksheet']));
+  // time map: white -> purple colour scale over the hour columns (pallets + racks of the truck due in that hour)
+  if (heat && heat.rows) {
+    const path = `xl/worksheets/sheet${heat.sheet}.xml`, ws = await zip.file(path).async('string');
+    const cf = `<conditionalFormatting sqref="${colName(heat.firstCol)}2:${colName(heat.lastCol)}${heat.rows + 1}"><cfRule type="colorScale" priority="1"><colorScale><cfvo type="num" val="0"/><cfvo type="max"/><color rgb="FFF5F3FF"/><color rgb="FF7C3AED"/></colorScale></cfRule></conditionalFormatting>`;
+    zip.file(path, putBefore(ws, cf, ['dataValidations', 'hyperlinks', 'printOptions', 'pageMargins', 'pageSetup', 'headerFooter', 'ignoredErrors', 'drawing', '/worksheet']));
+  }
+  let ct = await zip.file('[Content_Types].xml').async('string');
+  ct = ct.replace('</Types>', '<Override PartName="/xl/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'
+    + '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>');
+  zip.file('[Content_Types].xml', ct);
+  return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 }
 // the Plan chart (bars Plan, purple line assigned trucks, green dots left) as a PNG, with a title and the legend
 async function exportPlanPng() {
