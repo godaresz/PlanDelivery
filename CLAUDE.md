@@ -204,6 +204,11 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Backlog rows due before the start go to one "ค้างก่อนช่วง" row.
    Click a Plan bar → panel with that hour's Plan trucks by Dock group; click an assigned (purple) point → list of those trucks
    (`renderPlanHour`, `S.planSel`; click again or ✕ closes).
+   Output (2/11/2026, user: "จัดรถแล้ว" in full + time map + chart): Excel adds sheets "จัดรถแล้ว (ข้อมูลเต็ม)" (every
+   truck counted on the chart: shift, trip, plate, Dock, Window, pallets / racks / boxes, Due start / end, chart hour,
+   departure + source, vs Due start, status, reason) and "Time map จัดรถแล้ว" (truck × hour: pallets + racks by due hour,
+   "ออก HH:MM" in the departure hour, + trucks per hour row); button "⇩ กราฟ (PNG)" saves the chart (`exportPlanPng`,
+   computed styles inlined, title + range + legend).
 
 13. **Truck reasons** (19/10/2026): late or overdue trucks get a "เหตุผล" column on the truck page; signed-in editors pick a
    reason (REASONS list in app.js: รถมาช้า, ของไม่พร้อม, โหลดช้า, Dock ไม่ว่าง, รอเอกสาร, คุณภาพ, ระบบ, ลูกค้าขอเลื่อน, อื่น ๆ)

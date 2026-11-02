@@ -1050,7 +1050,7 @@ function renderPlan(all, scope, trips) {
       return `<td class="n">${c.n} คัน<div class="est-u">${f1(c.est)}</div></td><td class="n">${c.p} / ${c.r}${c.open ? `<div class="est-u">ค้าง ${c.open}</div>` : ''}</td><td class="n">${c.sn} คัน<div class="est-u">มี SN ${c.hasSn}/${c.p + c.r}</div></td><td class="n">${c.left}</td>`;
     }).join('')}${many ? `<td class="n">${tot.n} คัน</td>` : ''}<td class="n">${tot.n} / ${tot.left}</td><td></td></tr></tfoot>`;
   renderPlanDock(list, scope, byGroup, hourLbl, dayLbl, now);
-  S.planExport = { list, scope, byGroup, hourLbl, dayLbl, cum, trips: new Map(trips.map((x) => [x.sn, x])) };
+  S.planExport = { list, scope, byGroup, hourLbl, dayLbl, cum, trips: new Map(trips.map((x) => [x.sn, x])), hk, BEFORE, dueMode, start, end };
   $$('#planChart [data-pk]').forEach((el) => el.addEventListener('click', () => {
     const k = { key: el.dataset.pk, mode: el.dataset.pm };
     S.planSel = S.planSel && S.planSel.key === k.key && S.planSel.mode === k.mode ? null : k; // click again = close
@@ -1461,10 +1461,94 @@ function exportPlan() {
     dock.push({ WH: w, Dock: g.g.docks.join(', '), 'Window Name': g.g.windows.join(', '), 'วันที่': x.dayLbl(h), 'ช่วงเวลา': x.hourLbl(h),
       'รถ (คัน)': c.n, 'Est (ทศนิยม)': +c.est.toFixed(2), Pallet: c.p, Rack: c.r, 'ค้าง': c.open });
   }
+  // "จัดรถแล้ว" (21/10/2026 user: output the assigned trucks in full + a time map): every truck with a Shipping No. counted
+  // on the chart (hour of its Due start), and a truck × hour grid of its pallets + racks by due hour (+ departure hour)
+  const lbl = new Map(x.list.map((h) => [h.key, `${x.dayLbl(h)} ${x.hourLbl(h)}`]));
+  const hourOf = new Map();
+  for (const h of x.list) for (const w of x.scope) for (const sn of h.wh[w].sn) hourOf.set(sn, h.key);
+  const assigned = [...hourOf.keys()].map((sn) => x.trips.get(sn)).filter(Boolean)
+    .sort((a, b) => (a.dueStart || 0) - (b.dueStart || 0) || a.sn.localeCompare(b.sn));
+  const f = (d) => (d ? fmtShowFull(d) : '');
+  const statusTh = (t) => (t.left ? (t.late ? 'ออกแล้ว · ช้า' : 'ออกแล้ว · ตรงเวลา') : t.loading ? `มีทะเบียนรถแล้ว ${t.plate}`
+    : t.od ? 'เลย Due ยังไม่ออก' : t.soon ? 'ใกล้ถึง Due' : 'ยังไม่ถึง Due');
+  const full = assigned.map((t) => ({
+    WH: t.whOwn, 'Shipping No.': t.sn, 'วันที่กะ': t.info ? `${pad(t.info.date.getDate())}/${pad(t.info.date.getMonth() + 1)}/${t.info.date.getFullYear()}` : '', 'กะ': t.info ? (t.info.shift === 'N' ? 'ดึก (N)' : 'เช้า (D)') : '',
+    Trip: t.info ? t.info.no : '', 'ทะเบียนรถ': [...t.trucks].join(', ') || t.plate || '', Dock: [...t.docks].sort().join(', '),
+    'Window Name': [...t.wins].sort().join(', '), Pallet: t.p.size, Rack: t.r.size, 'กล่อง': t.box,
+    'Due เริ่ม': f(t.dueStart), 'Due จบ': f(t.dueEnd), 'ชั่วโมงในกราฟ (Due เริ่ม)': lbl.get(hourOf.get(t.sn)) || '',
+    'ออกจริง': t.left ? f(t.dep) : '', 'เวลาออกจาก': t.left ? (t.src === 'ILMS' ? (t.ilms && t.ilms.ds === 'D' ? 'ILMS (Delivery Date)' : 'ILMS') : t.src) : '',
+    'เทียบ Due เริ่ม (นาที)': t.left && t.lateMin !== null ? t.lateMin : '', 'สถานะ': statusTh(t),
+    'เลย Due (นาที)': !t.left && t.od ? t.odMin : '', 'เหตุผล': reasonTxt(t.sn),
+  }));
+  // time map: pallets + racks of each truck by the hour of their due (distinct pallets; columns = the chart's hours)
+  const cols = x.list.map((h) => h.key);
+  const units = new Map(assigned.map((t) => [t.sn, new Map()]));
+  const seen = new Set();
+  for (const r of WHS.flatMap((w) => (S.view && S.view.full[w]) || [])) {
+    const m = r.sn && units.get(r.sn);
+    if (!m || !r.due) continue;
+    const id = `${r.sn}|${r.wh}|${r.pl || r.k}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    let k = x.dueMode && r.due < x.start ? x.BEFORE : x.hk(r.due);
+    if (!lbl.has(k)) k = x.dueMode && x.end && r.due >= x.end ? 'after' : k;
+    m.set(k, (m.get(k) || 0) + 1);
+  }
+  const tmap = assigned.map((t) => {
+    const m = units.get(t.sn), o = { WH: t.whOwn, 'Shipping No.': t.sn, 'ทะเบียนรถ': [...t.trucks].join(', ') || t.plate || '', 'Due เริ่ม': f(t.dueStart) };
+    const depKey = t.left && t.dep ? x.hk(t.dep) : '';
+    for (const k of cols) {
+      const n = m.get(k) || 0, out = k === depKey ? `ออก ${pad(t.dep.getHours())}:${pad(t.dep.getMinutes())}` : '';
+      o[lbl.get(k)] = n && out ? `${n} · ${out}` : n || out || '';
+    }
+    if (m.get('after')) o['หลังช่วง'] = m.get('after');
+    o['รวม Pallet+Rack'] = [...m.values()].reduce((a, b) => a + b, 0);
+    o['สถานะ'] = statusTh(t);
+    return o;
+  });
+  const tsum = { WH: 'รวม', 'Shipping No.': `${assigned.length} คัน` };
+  for (const k of cols) tsum[lbl.get(k)] = assigned.filter((t) => hourOf.get(t.sn) === k).length || '';
+  if (tmap.length) tmap.push({}, { ...tsum, 'Due เริ่ม': 'รถจัดแล้ว (คัน, ตาม Due เริ่ม)' });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Plan รายชั่วโมง');
+  if (full.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(full), 'จัดรถแล้ว (ข้อมูลเต็ม)');
+  if (tmap.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(tmap), 'Time map จัดรถแล้ว');
   if (dock.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dock), 'แยกตาม Dock');
   XLSX.writeFile(wb, `PlanTruck_${stamp()}.xlsx`);
+}
+// the Plan chart (bars Plan, purple line assigned trucks, green dots left) as a PNG, with a title and the legend
+async function exportPlanPng() {
+  const svg = $('#planChart svg');
+  if (!svg) { toast('ไม่มีกราฟให้ Export', true); return; }
+  const r = svg.getBoundingClientRect(), W = Math.ceil(r.width), H = Math.ceil(r.height), sc = 2, top = 46, bottom = 34;
+  const clone = svg.cloneNode(true);
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg'); clone.setAttribute('width', W); clone.setAttribute('height', H);
+  // inline the computed styles the chart takes from styles.css (colours, fonts), so the image looks like the page
+  const src = svg.querySelectorAll('*'), dst = clone.querySelectorAll('*');
+  src.forEach((el, i) => { const cs = getComputedStyle(el); dst[i].setAttribute('style', ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-linejoin', 'paint-order', 'opacity', 'font-size', 'font-weight', 'font-family', 'text-anchor', 'dominant-baseline']
+    .map((p) => `${p}:${cs.getPropertyValue(p)}`).join(';')); });
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' }));
+  try {
+    const img = await new Promise((ok, bad) => { const i = new Image(); i.onload = () => ok(i); i.onerror = bad; i.src = url; });
+    const c = document.createElement('canvas'); c.width = W * sc; c.height = (H + top + bottom) * sc;
+    const g = c.getContext('2d'); g.scale(sc, sc);
+    g.fillStyle = '#fff'; g.fillRect(0, 0, W, H + top + bottom);
+    const font = getComputedStyle(document.body).fontFamily;
+    g.fillStyle = '#1F2937'; g.font = `600 17px ${font}`;
+    const v = S.view, rng = S.mode === 'sn' ? `วันที่ส่ง ${S.snDate || ''} ${S.snShift || ''}` : v.start && v.end ? `${fmtShowFull(v.start)} – ${fmtShowFull(new Date(v.end.getTime() - 60000))}` : '';
+    g.fillText(`Plan รถรายชั่วโมง · ${S.wh === 'ALL' ? 'WH1 + WH4' : S.wh}`, 12, 22);
+    g.font = `13px ${font}`; g.fillStyle = '#6B7280'; g.fillText(rng, 12, 40);
+    g.drawImage(img, 0, top, W, H);
+    const leg = [['#BFDBFE', 'รถตาม Plan', 'bar'], ['#7C3AED', 'จัดรถแล้ว (Shipping No.)', 'line'], ['#10B981', 'ออกแล้ว', 'dot']];
+    let lx = 12; const ly = top + H + 20; g.font = `12.5px ${font}`;
+    for (const [col, t, kind] of leg) {
+      g.fillStyle = col; g.strokeStyle = col; g.lineWidth = 2.5;
+      if (kind === 'bar') g.fillRect(lx, ly - 9, 14, 10); else if (kind === 'line') { g.beginPath(); g.moveTo(lx, ly - 4); g.lineTo(lx + 16, ly - 4); g.stroke(); } else { g.beginPath(); g.arc(lx + 6, ly - 4, 4.5, 0, 7); g.fill(); }
+      g.fillStyle = '#374151'; g.fillText(t, lx + 22, ly); lx += 30 + g.measureText(t).width + 14;
+    }
+    const a = document.createElement('a'); a.download = `PlanTruck_${stamp()}.png`; a.href = c.toDataURL('image/png'); a.click();
+  } catch (e) { toast('สร้างรูปไม่สำเร็จ: ' + e.message, true); }
+  finally { URL.revokeObjectURL(url); }
 }
 function exportEst() {
   const x = S.estExport;
@@ -2108,6 +2192,7 @@ function bind() {
   $$('#modeTabs .tab').forEach((t) => t.addEventListener('click', () => setMode(t.dataset.mode)));
   $$('#estMode .tab').forEach((t) => t.addEventListener('click', () => { S.estMode = t.dataset.em; render(); }));
   $('#btnPlanXlsx').addEventListener('click', exportPlan);
+  $('#btnPlanPng').addEventListener('click', exportPlanPng);
   $('#btnEstXlsx').addEventListener('click', exportEst);
   $('#btnAcc').addEventListener('click', () => computeAccuracy(30));
   $('#btnAutoToggle').addEventListener('click', () => (autoUp.on ? autoStop() : autoStart(true)));
