@@ -1,6 +1,6 @@
 import * as store from './store.js';
 import { parseSlideFile, parseWmsFile, parseIlmsFile, parseWindowTimes, normTime, fmtShow, fmtShowFull, pad, fromKey } from './parse.js';
-import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, WF_MIN, dueCalib, waitIlms, loadedAsDone, plateOf, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
+import { evaluate, lockDues, byWindow, byTrip, tripTotals, mergeWms, mergeIlms, parseTrip, archDay, learnLoadGroups, estimateTrucks, estimateHistTrucks, WF_MIN, dueCalib, dueShiftAdd, dueShiftDone, mergeDueShift, shiftTrucks, shiftForecast, waitIlms, loadedAsDone, plateOf, hourBucket, allocateWhole, truckSummaries, truckAcc, truckAccAdd, truckAccDone, truckAccLinks, mergeTruckHist, kpiDueStart, SOON_MIN, setSoonMin, PERIODS, LINK_MIN, LINK_SHARE, ST } from './logic.js';
 
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -279,16 +279,19 @@ async function rebuildHist() {
   const idx = S.data.archIndex || {};
   const prev = S.hist || {};
   // start from the saved history so trucks of quarters already deleted from Firebase are kept
-  const hist = { WH1: { ...(prev.WH1 || {}) }, WH4: { ...(prev.WH4 || {}) }, links: {} };
+  const hist = { WH1: { ...(prev.WH1 || {}) }, WH4: { ...(prev.WH4 || {}) }, links: {}, dueShift: { ...(prev.dueShift || {}) } };
   for (const wh of WHS) {
     const days = Object.keys(idx[wh] || {}).sort();
-    const acc = truckAcc();
+    const acc = truckAcc(), dacc = new Map();
     for (let i = 0; i < days.length; i++) {
       toast(`กำลังสร้างสรุปรถ ${wh}: ประวัติวันที่ ${i + 1}/${days.length}…`, false, 600000);
       // evaluated so each truck also keeps its due start (KPI trend) as the app shows it
-      truckAccAdd(acc, evaluate(await store.loadArchiveDay(wh, days[i]), S.slideMap, S.rules.groups || [], new Date()));
+      const ev = evaluate(await store.loadArchiveDay(wh, days[i]), S.slideMap, S.rules.groups || [], new Date());
+      truckAccAdd(acc, ev); dueShiftAdd(dacc, ev);
     }
-    truckAccAdd(acc, evaluate(S.data[wh].data || [], S.slideMap, S.rules.groups || [], new Date()));
+    const evA = evaluate(S.data[wh].data || [], S.slideMap, S.rules.groups || [], new Date());
+    truckAccAdd(acc, evA); dueShiftAdd(dacc, evA);
+    hist.dueShift[wh] = { ...(hist.dueShift[wh] || {}), ...dueShiftDone(dacc) }; // every day was read: rebuilt shifts replace saved ones
     Object.assign(hist[wh], truckAccDone(acc)); // rebuilt trucks replace their old summary
     const old = (prev.links && prev.links[wh]) || { parts: {}, sups: {} }, ln = truckAccLinks(acc);
     hist.links[wh] = { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } };
@@ -946,7 +949,7 @@ function renderPlan(all, scope, trips) {
   for (const wh of scope) {
     const model = estModel(wh);
     if (!model.whMean) { notes.push(`${wh}: ยังไม่มีประวัติรถที่ Confirm แล้ว จึงยังประมาณการไม่ได้`); continue; }
-    const est = estimateTrucks(shipBinRows(all[wh]), model, null, (due) => {
+    const est = estimateTrucks(shipBinRows(all[wh]), withShiftTarget(wh, model), null, (due) => {
       const h = place(due);
       return { key: h.key };
     }, null, new Date(), estCalib(wh, new Date()));
@@ -1670,15 +1673,33 @@ function estModel(wh, beforeKey = '') {
 // Due mode: factor {D, N} from the recent finished shifts (logic.dueCalib); each past day is estimated with a model learned
 // only from the days before it (cached until the truck history or the data changes)
 const calCache = { key: '', models: new Map(), out: new Map() };
-function estCalib(wh, cutoff) {
-  if (S.mode === 'sn') return null;
+function calSync() { // the caches below are valid for one version of the truck history + WMS data
   const ver = (x) => (x && x.meta ? x.meta.version : '');
   const key = `${ver(S.data && S.data.truckhist)}|${WHS.map((w) => ver(S.data && S.data[w])).join('|')}`;
   if (calCache.key !== key) { calCache.key = key; calCache.models = new Map(); calCache.out = new Map(); }
+}
+const calModelFor = (wh) => (day) => { const mk = `${wh}|${day}`; if (!calCache.models.has(mk)) calCache.models.set(mk, estModel(wh, day)); return calCache.models.get(mk); };
+// Due mode: the whole-shift forecast per shift instance (logic.shiftForecast), from the per-shift due summary (truck history
+// `dueShift` + the loaded rows for the last days) and the real trucks per shift; estimateTrucks shares it out by pallet
+function withShiftTarget(wh, model) {
+  if (S.mode === 'sn' || !model || !model.whMean) return model;
+  calSync();
+  const tk = `${wh}|target`;
+  if (!calCache.out.has(tk)) {
+    const rows = S.view.full[wh];
+    const dueShift = mergeDueShift((S.hist && S.hist.dueShift && S.hist.dueShift[wh]) || {}, dueShiftDone(dueShiftAdd(new Map(), rows)));
+    const trucks = shiftTrucks(mergeTruckHist((S.hist && S.hist[wh]) || {}, truckAccDone(truckAccAdd(truckAcc(), rows))), wh.slice(2));
+    const modelFor = calModelFor(wh), memo = new Map();
+    calCache.out.set(tk, (k, L) => { const mk = `${k}|${L.toFixed(1)}`; if (!memo.has(mk)) memo.set(mk, shiftForecast({ S: k, L, dueShift, trucks, modelFor })); return memo.get(mk); });
+  }
+  return { ...model, shiftTarget: calCache.out.get(tk) };
+}
+function estCalib(wh, cutoff) {
+  if (S.mode === 'sn') return null;
+  calSync();
   const ck = `${wh}|${ymd(cutoff)}|${cutoff.getHours() >= 20 ? 'N' : cutoff.getHours() * 60 + cutoff.getMinutes() >= 450 ? 'D' : 'n'}`;
   if (calCache.out.has(ck)) return calCache.out.get(ck);
-  const modelFor = (day) => { const mk = `${wh}|${day}`; if (!calCache.models.has(mk)) calCache.models.set(mk, estModel(wh, day)); return calCache.models.get(mk); };
-  const c = dueCalib(S.view.full[wh], modelFor, wh.slice(2), cutoff); // this warehouse's rows (its own trucks)
+  const c = dueCalib(S.view.full[wh], calModelFor(wh), wh.slice(2), cutoff); // this warehouse's rows (its own trucks)
   calCache.out.set(ck, c);
   return c;
 }
@@ -1710,7 +1731,7 @@ function renderEst(all, scope) {
     // open mode: the shipped rows tell which Windows already used their fixed trips in the shift
     const calib = estCalib(wh, cmp && S.view.start ? S.view.start : new Date());
     if (calib && (calib.n.D || calib.n.N)) notes.push(`${wh}: ปรับตาม Due → รถจริงของกะล่าสุด กะเช้า ×${calib.D.toFixed(2)} (${calib.n.D} กะ) · กะดึก ×${calib.N.toFixed(2)} (${calib.n.N} กะ)`);
-    const est = estimateTrucks(work, model, cmp ? truckPallets : null, undefined, cmp ? null : binned, new Date(), calib);
+    const est = estimateTrucks(work, cmp ? withShiftTarget(wh, model) : model, cmp ? truckPallets : null, undefined, cmp ? null : binned, new Date(), calib);
     // headline (21/10/2026): the forecast from the due of the whole range — stable through the shift (a Shipping No. counts
     // only when it is an earlier shift's truck) — next to the trucks already scanned (distinct Shipping No. of this
     // warehouse whose shift overlaps the range). Back-test, forecast at the shift start vs real trucks: WH1 2.8%, WH4 3.3%
@@ -1723,7 +1744,7 @@ function renderEst(all, scope) {
     }
     knownTotal += knownSn.size;
     // the forecast learns only from days before the range (like compare mode), so it is the same number in both modes
-    const fe = cmp ? est : estimateTrucks(binned, startKey ? estModel(wh, startKey) : model, null, undefined, null, new Date(), calib);
+    const fe = cmp ? est : estimateTrucks(binned, withShiftTarget(wh, startKey ? estModel(wh, startKey) : model), null, undefined, null, new Date(), calib);
     let whFe = 0; for (const o of fe.groups) for (const x of o.cells.values()) whFe += x.est;
     restEst += whFe; restRound += whFe > 0 ? Math.max(1, Math.round(whFe)) : 0; // whole trucks per warehouse, like the table
     const known = [...model.groups.values()].filter((g) => !g.isNew);
@@ -2036,6 +2057,9 @@ async function uploadFileRun(kind, file, auto = false) {
       hist[wh] = mergeTruckHist(hist[wh] || {}, truckAccDone(acc));
       const ln = truckAccLinks(acc), old = (hist.links && hist.links[wh]) || { parts: {}, sups: {} };
       hist.links = { ...(hist.links || {}), [wh]: { parts: { ...old.parts, ...ln.parts }, sups: { ...old.sups, ...ln.sups } } };
+      // per-shift due summary for the whole-shift forecast: shifts of the last days are complete in the active rows
+      const ds = dueShiftDone(dueShiftAdd(new Map(), m.rows.concat(m.toArchive)));
+      hist.dueShift = { ...(hist.dueShift || {}), [wh]: mergeDueShift((hist.dueShift || {})[wh], ds, Math.max(1, keepDays - 2)) };
       const wmsMeta = { fileName: file.name, fileAt: file.lastModified || null, count: m.rows.length, fromFile: split[wh].length, kept: m.kept, skipped: m.skipped };
       if (latest[wh] && latest[wh].meta && !m.toArchive.length && rowsCanon(m.rows) === oldCanon) await store.touchMeta(wh, wmsMeta);
       else await store.saveWms(wh, m.rows, wmsMeta, latest[wh] && latest[wh].meta ? latest[wh].meta.version : null);

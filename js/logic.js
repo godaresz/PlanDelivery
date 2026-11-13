@@ -589,17 +589,21 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
     items.push({ x, e: e * early, cal: cf, inst: shiftInst(pl.w, pl.due).key, load: eqOf(pl.rk) * early, pl });
   }
   // due mode, whole range (no context): per shift instance, half pallet sum + half whole-shift line (model.shiftFit)
-  const blend = new Map();
-  if (due && !context && model.shiftFit) {
+  const blend = new Map(), target = new Set();
+  if (due && !context && (model.shiftTarget || model.shiftFit)) {
     const agg = new Map();
     for (const it of items) { const a = agg.get(it.inst) || [0, 0]; a[0] += it.e; a[1] += it.load; agg.set(it.inst, a); }
     for (const [k, [E, L]] of agg) {
-      const f = model.shiftFit[k[8]];
-      if (f && E > 0) blend.set(k, (E + Math.max(0, f.my + f.b * (L - f.mx))) / 2 / E);
+      if (!(E > 0)) continue;
+      // whole-shift forecast (shiftForecast, has its own calibration): the pallets share it out by their own estimate
+      const T = model.shiftTarget ? model.shiftTarget(k, L) : null;
+      if (T !== null && T > 0) { blend.set(k, T / E); target.add(k); continue; }
+      const f = model.shiftFit && model.shiftFit[k[8]];
+      if (f) blend.set(k, (E + Math.max(0, f.my + f.b * (L - f.mx))) / 2 / E);
     }
   }
   for (const { x, e: e0, cal, inst, pl } of items) {
-    const e = e0 * (blend.get(inst) || 1) * cal;
+    const e = e0 * (blend.get(inst) || 1) * (target.has(inst) ? 1 : cal);
     x.est += e;
     // estS = estimate of the shipped part only, compared with the trucks actually used for it
     if (truckPallets && pl.sn && truckPallets.get(pl.sn)) { x.act += 1 / truckPallets.get(pl.sn); x.estS += e; x.shipped++; x.trucks.add(pl.sn); }
@@ -617,6 +621,65 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
 // Each past shift is estimated with modelFor(its day) = a model learned only from earlier days (a model
 // that already learned that shift hides the error: no gain). Back-test 24/08–20/10 with the ~8 days of rows the app
 // keeps (Est by due vs real trucks), factor applied half way (CAL_W): WH1 4.1% -> 3.4%, WH4 3.6% -> 3.3%.
+// ---- whole-shift forecast (13/11/2026, back-test on live data 24/08–12/11, each day learning only from earlier days) ----
+// Per shift instance (date + D/N of the due) the app keeps a small summary of the pallets DUE in it (`dueShift`, saved in
+// the truck history): [pallets, racks, early pallets, early racks] (early = already on an earlier shift's truck).
+// Forecast of a shift = half (a) the whole-shift line (model.shiftFit) calibrated on the recent shifts + half (b) a line
+// "load due in the shift -> real trucks" over the last 40 shifts of the letter. Error vs real trucks: WH1 3.28% -> 3.10%
+// (24/08–15/10) and 3.93% -> 3.58% (16/10–12/11), WH4 3.33% -> 3.15% and 3.83% -> 3.04%.
+export function dueShiftAdd(acc, rows) {
+  for (const r of rows) {
+    const due = r.due instanceof Date ? r.due : fromKey(r.du || r.dd);
+    if (!due) continue;
+    const k = shiftInst(r.w, due).key, id = r.pl || r.k;
+    if (!acc.has(k)) acc.set(k, { P: new Set(), R: new Set(), EP: new Set(), ER: new Set() });
+    const x = acc.get(k), t = r.sn && /^(\d{8})\d([DN])/i.exec(r.sn), early = t && `${t[1]}${t[2].toUpperCase()}` < k;
+    (r.rk ? x.R : x.P).add(id);
+    if (early) (r.rk ? x.ER : x.EP).add(id);
+  }
+  return acc;
+}
+export const dueShiftDone = (acc) => Object.fromEntries([...acc].map(([k, x]) => [k, [x.P.size, x.R.size, x.EP.size, x.ER.size]]));
+// merge: instances that may still change (start within `freshDays`) take the new counts, older ones keep the saved ones
+export function mergeDueShift(old, add, freshDays = 5, now = new Date()) {
+  const out = { ...(old || {}) }, lim = now.getTime() - freshDays * 86400000;
+  for (const [k, v] of Object.entries(add)) if (!out[k] || instStart(k).getTime() >= lim) out[k] = v;
+  return out;
+}
+const dueLoad = (v, rf) => (v[0] + v[1] * rf) - EARLY_W * (v[2] + v[3] * rf);
+// real trucks of this warehouse per shift (distinct Shipping No. in the truck history)
+export function shiftTrucks(hist, whDigit) {
+  const m = new Map();
+  for (const [sn, t] of Object.entries(hist || {})) if (sn[8] === String(whDigit) && t.d && t.s) m.set(t.d + t.s, (m.get(t.d + t.s) || 0) + 1);
+  return m;
+}
+// forecast of shift instance S with load L (pallet-equivalents due in it, early ones at 0.8): null = no basis
+export function shiftForecast({ S, L, dueShift, trucks, modelFor }) {
+  const day = S.slice(0, 8), letter = S[8], dn = (k) => instStart(k).getTime() / 86400000;
+  const prior = Object.keys(dueShift || {}).filter((k) => k[8] === letter && k.slice(0, 8) < day && (trucks.get(k) || 0) >= 10).sort();
+  const lineOf = (k, load) => { const m = modelFor(k.slice(0, 8)), f = m && m.shiftFit && m.shiftFit[letter]; return f ? f.my + f.b * (load - f.mx) : null; };
+  const loadOf = (k) => { const m = modelFor(k.slice(0, 8)); return m ? dueLoad(dueShift[k], m.rackFactor) : null; };
+  // (a) whole-shift line, calibrated half way on the last 7 shifts within 8 days (real / line in 0.8–1.25)
+  let a = lineOf(S, L);
+  if (a !== null) {
+    const pr = prior.filter((k) => dn(S) - dn(k) <= 8).map((k) => [trucks.get(k), lineOf(k, loadOf(k))])
+      .filter(([t, e]) => e > 0 && t / e >= 0.8 && t / e <= 1.25).slice(-7);
+    if (pr.length >= 3) a *= Math.min(1.25, Math.max(0.8, 1 + (pr.reduce((x, p) => x + p[0], 0) / pr.reduce((x, p) => x + p[1], 0) - 1) * CAL_W));
+  }
+  // (b) line "load due -> trucks" over the last 40 shifts (shifts more than 20% off the proportional line left out)
+  let b = null;
+  const rfS = (modelFor(day) || {}).rackFactor || 1; // one model for the 50 loads (a model per day would cost ~1 s)
+  let pts = prior.slice(-50).map((k) => [dueLoad(dueShift[k], rfS), trucks.get(k)]).filter(([x]) => x > 0);
+  const b0 = pts.reduce((x, p) => x + p[1], 0) / (pts.reduce((x, p) => x + p[0], 0) || 1);
+  pts = pts.filter(([x, t]) => Math.abs(t / (x * b0) - 1) <= 0.2).slice(-40);
+  if (pts.length >= 12) {
+    const n = pts.length, mx = pts.reduce((x, p) => x + p[0], 0) / n, my = pts.reduce((x, p) => x + p[1], 0) / n;
+    let sxx = 0, sxy = 0; for (const [x, t] of pts) { sxx += (x - mx) ** 2; sxy += (x - mx) * (t - my); }
+    b = my + (sxx ? sxy / (sxx * (1 + 1 / n)) : b0) * (L - mx);
+  }
+  if (a === null && b === null) return null;
+  return a === null ? b : b === null ? a : (a + b) / 2;
+}
 export const CAL_W = 0.5, EARLY_W = 0.2;
 export function dueCalib(rows, modelFor, whDigit, cutoff = new Date(), K = 7) {
   const due = new Map(), act = new Map();

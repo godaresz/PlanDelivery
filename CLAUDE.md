@@ -20,7 +20,8 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
   `slide_meta` + `slide_c0..n`, `WH1_meta` + `WH1_c*`, `WH4_meta` + `WH4_c*`, `ilms_meta` + `ilms_c*`, `rules`,
   archive `arch_<WH>_<YYYYMMDD>_meta` + `_c*` (shipped rows by ship day, never deleted) + `arch_index`.
   `truckhist_meta` + `_c*` = compact truck summaries for Est
-  `{WH1: {sn: {v:2, s, d, p, r, ds, n: {'Dock|Window': [pallets, racks]}}}, WH4: {...}, links: {WH1: {parts: {part: node}, sups: {...}}}}`
+  `{WH1: {sn: {v:2, s, d, p, r, ds, n: {'Dock|Window': [pallets, racks]}}}, WH4: {...}, links: {WH1: {parts: {part: node}, sups: {...}}},
+  dueShift: {WH1: {'YYYYMMDDD|N': [pallets, racks, early pallets, early racks]}, WH4: {...}}}` (dueShift 13/11/2026, rule 11)
   (`ds` = earliest due used of the truck, 19/10/2026, for the KPI trend; summaries saved before that have none until the rebuild button)
   (~0.5 MB for 2.5 months), updated on every WMS upload (max per Dock|Window), kept 365 days, NOT removed by the quarterly
   delete. Data page button "สร้างสรุปรถใหม่จากประวัติทั้งหมด" rebuilds it from every archive day (one day at a time),
@@ -183,6 +184,18 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
      the shift start vs real trucks of the shift (71 shifts per WH, 24/08–20/10, holiday catch-up / data-gap shifts left
      out): WH1 2.8% (±1 truck 92%), WH4 3.3% (82%); old model 3.4% / 4.4%. Tried: "scanned trucks + Est of the rest"
      (converges to the real number but is not a forecast — replaced by this headline).
+     **Whole-shift forecast** (13/11/2026, user: "analyse in detail and get as close as possible"; back-test on live data
+     24/08–12/11, each day learning only from earlier days, holiday catch-up left out): per shift instance the Due-mode
+     whole-range Est = `shiftForecast` = half (a) `model.shiftFit` line calibrated on the last 7 shifts within 8 days
+     (real ÷ line 0.8–1.25, half way) + half (b) a line "load due in the shift → real trucks" over the last 40 shifts of the
+     letter (shifts > 20% off the proportional line left out, slope shrunk by n/(n+1)); the pallets share it out by their
+     own estimate (`model.shiftTarget`, `withShiftTarget` in app.js; dueCalib then not applied). Error vs real trucks:
+     WH1 3.28% → 3.19% (24/08–15/10), 3.93% → 3.57% (16/10–12/11); WH4 3.33% → 3.08%, 3.83% → 3.09%. Needs the per-shift
+     due summary `truckhist.dueShift = {WH1: {'YYYYMMDDD': [pallets, racks, early pallets, early racks]}}` (early = already
+     on an earlier shift's truck): written on every WMS upload for shifts that started within keepDays − 2 days
+     (`mergeDueShift`), fully by the rebuild button (until then only the last days exist and (b) needs ≥ 12 shifts).
+     Tried and not better: longer calibration windows / full-strength calibration, regressions with racks / Window count /
+     previous shift trucks, blends with the per-pallet model.
      Truck summaries count a pallet with lines in two Docks in both nodes: `scaleNodes` scales node counts to the truck's
      distinct pallets / racks when learning.
    - Other pallets: each adds (1 or rackFactor) ÷ group load in its due's shift. Whole trucks: total = sum rounded to the nearest truck (.5 up, min 1;

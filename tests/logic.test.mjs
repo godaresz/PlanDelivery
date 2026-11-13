@@ -295,3 +295,20 @@ test('10. "มีทะเบียนรถแล้ว" needs a real plate: WM
   const [t] = byTrip([a], new Map(), now);
   assert.equal(t.loading, false); assert.equal(t.left, false);
 });
+
+test('11. whole-shift forecast: per-shift due summary + line "load due -> trucks" over earlier shifts', async () => {
+  const { dueShiftAdd, dueShiftDone, mergeDueShift, shiftForecast } = await import('../js/logic.js');
+  // due summary: pallets / racks due in the shift, early = already on an earlier shift's truck
+  const rows = [{ k: 'a', pl: 'P1', w: '1D01', du: '2026-11-12 09:00' }, { k: 'b', pl: 'P1', w: '1D01', du: '2026-11-12 09:00' },
+    { k: 'c', pl: 'R1', rk: 1, w: '1D01', du: '2026-11-12 10:00' }, { k: 'd', pl: 'P2', w: '1D01', du: '2026-11-12 08:00', sn: '202611111N003' }];
+  assert.deepEqual(dueShiftDone(dueShiftAdd(new Map(), rows)), { '20261112D': [2, 1, 1, 0] });
+  // merge keeps old shifts, refreshes recent ones
+  const m = mergeDueShift({ '20261001D': [1, 1, 0, 0], '20261112D': [9, 9, 0, 0] }, { '20261001D': [5, 5, 0, 0], '20261112D': [2, 1, 1, 0] }, 5, new Date(2026, 10, 13));
+  assert.deepEqual(m, { '20261001D': [1, 1, 0, 0], '20261112D': [2, 1, 1, 0] });
+  // 30 earlier day shifts: trucks = 5 + load / 20 exactly -> the forecast follows that line
+  const dueShift = {}, trucks = new Map();
+  for (let i = 0; i < 30; i++) { const d = new Date(2026, 8, 1 + i), k = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}D`;
+    const load = 300 + 10 * i; dueShift[k] = [load, 0, 0, 0]; trucks.set(k, 5 + load / 20); }
+  const f = shiftForecast({ S: '20261015D', L: 500, dueShift, trucks, modelFor: () => ({ rackFactor: 1, shiftFit: null }) });
+  assert.ok(Math.abs(f - (5 + 500 / 20)) < 0.2, String(f));
+});
