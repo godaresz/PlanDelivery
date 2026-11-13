@@ -952,7 +952,7 @@ function renderPlan(all, scope, trips) {
     const est = estimateTrucks(shipBinRows(all[wh]), withShiftTarget(wh, model), null, (due) => {
       const h = place(due);
       return { key: h.key };
-    }, null, new Date(), estCalib(wh, new Date()));
+    }, null, new Date(), estCalib(wh, new Date()), { startShare: 0.5 }); // half of a Window's trucks at its first due
     const cells = est.groups.flatMap((o, gi) => [...o.cells.entries()].map(([bk, x]) => [bk, x, gi]));
     const alloc = allocateWhole(cells.map(([, x]) => x.est));
     const grp = est.groups.map((o) => ({ g: o.group, openDocks: o.openDocks, openWins: o.openWins, cells: new Map(), n: 0, est: 0 }));

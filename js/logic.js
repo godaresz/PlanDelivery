@@ -521,7 +521,10 @@ const instStart = (k) => new Date(+k.slice(0, 4), +k.slice(4, 6) - 1, +k.slice(6
 // Window model over-counted, 13% -> 17%); shifts not started yet use the Window model (only the slope when part of a
 // Window's work there was already shipped early).
 // calib (due mode only): {D, N} factors from dueCalib — what the due-dated pallets of recent shifts really needed.
-export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = periodBucket, context = null, now = new Date(), calib = null) {
+// opts.startShare (Plan page): that share of each Window's trucks in a shift goes to the hour of the Window's FIRST due,
+// the rest stays with its pallets — the Plan's line counts a truck at its Due start (back-test 02/10–12/11 vs trucks by
+// Due-start hour: 1-h cells WH1 41% -> 32%, WH4 45% -> 42%; 6-h cells 18% -> 11.5% / 13.5%; share 0.5).
+export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = periodBucket, context = null, now = new Date(), calib = null, opts = {}) {
   const pal = new Map();
   const due = !!calib; // due mode: a forecast from the due — a Shipping No. counts only when it is an earlier shift's truck
   const earlyOf = (sn, w, d) => { const t = sn && /^(\d{8})\d([DN])/i.exec(sn); return !!t && `${t[1]}${t[2].toUpperCase()}` < shiftInst(w, d).key; };
@@ -602,8 +605,13 @@ export function estimateTrucks(openRows, model, truckPallets = null, bucketOf = 
       if (f) blend.set(k, (E + Math.max(0, f.my + f.b * (L - f.mx))) / 2 / E);
     }
   }
-  for (const { x, e: e0, cal, inst, pl } of items) {
-    const e = e0 * (blend.get(inst) || 1) * (target.has(inst) ? 1 : cal);
+  const share = opts.startShare || 0, first = new Map(); // Window|instance -> earliest pallet item
+  if (share) for (const it of items) { const k = `${it.pl.w || '-'}|${it.inst}`, f = first.get(k); if (!f || it.pl.due < f.pl.due) first.set(k, it); }
+  for (const it of items) {
+    const { x, e: e0, cal, inst, pl } = it;
+    const eAll = e0 * (blend.get(inst) || 1) * (target.has(inst) ? 1 : cal);
+    const e = eAll * (1 - share);
+    if (share) first.get(`${pl.w || '-'}|${inst}`).x.est += eAll * share;
     x.est += e;
     // estS = estimate of the shipped part only, compared with the trucks actually used for it
     if (truckPallets && pl.sn && truckPallets.get(pl.sn)) { x.act += 1 / truckPallets.get(pl.sn); x.estS += e; x.shipped++; x.trucks.add(pl.sn); }

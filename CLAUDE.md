@@ -217,6 +217,13 @@ WMS exports against the DataSlide re-schedule list. Owner: Suwarot. Reply to the
    Backlog rows due before the start go to one "ค้างก่อนช่วง" row.
    Click a Plan bar → panel with that hour's Plan trucks by Dock group; click an assigned (purple) point → list of those trucks
    (`renderPlanHour`, `S.planSel`; click again or ✕ closes).
+   **Hourly spread** (13/11/2026, 6-week back-test 02/10–12/11): the Plan counts a truck at its Due start, so half of each
+   Window's trucks in a shift go to the hour of the Window's first due (`estimateTrucks` opts `startShare` 0.5, Plan +
+   overview chart only; the Est page keeps the pallet-based spread its "ใช้จริง" uses). Vs trucks by Due-start hour:
+   1-h cells WH1 41% → 32%, WH4 45% → 38%; 6-h cells 18% → 11–12%. Spreading by plain pallet count was worse (48–50%).
+   Whole-shift total in normal weeks (19/10–12/11): WH1 3.4% (±1 truck 80%), WH4 2.9% (93%); the 12–17/10 holiday
+   catch-up (trucks ran less full, e.g. 13/10 D 40 trucks for a normal load) cannot be predicted from the load and is the
+   main remaining error; weight / window / calibration variants changed the 6-week error by ≤ 0.2% (not adopted).
    Output (2/11/2026, user: "จัดรถแล้ว" in full + time map + chart): Excel adds sheets "จัดรถแล้ว (ข้อมูลเต็ม)" (every
    truck counted on the chart: shift, trip, plate, Dock, Window, pallets / racks / boxes, Due start / end, chart hour,
    departure + source, vs Due start, status, reason) and "Time map จัดรถแล้ว" (truck × hour: pallets + racks by due hour,
